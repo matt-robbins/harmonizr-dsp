@@ -9,13 +9,24 @@
 #ifndef FilterDSPKernel_hpp
 #define FilterDSPKernel_hpp
 
+#ifdef __APPLE__
 #import "DSPKernel.hpp"
 #import "ParameterRamper.hpp"
+#include <Accelerate/Accelerate.h>
+#include <dispatch/dispatch.h>
+
+typedef AUAudioFrameCount frame_count_t;
+typedef AUParameterAddress param_address_t;
+typedef AUValue param_value_t;
+typedef AudioTimeStamp timestamp_t;
+
+typedef AUMIDIEvent midi_event_t;
+
+#endif
+
 #import <vector>
 #import <cmath>
 #import <sys/time.h>
-#include <Accelerate/Accelerate.h>
-#include <dispatch/dispatch.h>
 
 template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
@@ -121,16 +132,21 @@ static float inc_to_target(float value, float target, float c, float maxrate_up,
 }
 
 /*
-	FilterDSPKernel
+	HarmonizerDSPKernel
 	Performs our filter signal processing.
 	As a non-ObjC class, this is safe to use from render thread.
 */
-class FilterDSPKernel : public DSPKernel {
+
+#ifdef __APPLE__
+class HarmonizerDSPKernel : public DSPKernel {
+#else
+class HarmonizerDSPKernel {
+#endif
 public:
     int n_channels = 0;
     // MARK: Member Functions
 
-    FilterDSPKernel() {}
+    HarmonizerDSPKernel() {}
 	
 	void init(int channelCount, double inSampleRate) {
 		n_channels = channelCount;
@@ -158,6 +174,9 @@ public:
         nvoices = 16;
         voices = (voice_t *) calloc(nvoices, sizeof(voice_t));
         voice_ix = 1;
+        
+        in_buffers = (float **) calloc(channelCount, sizeof(float *));
+        out_buffers = (float **) calloc(channelCount, sizeof(float *));
         
         for (int k = 0; k < nvoices; k++)
         {
@@ -286,6 +305,9 @@ public:
         free(fft_buf.imagp);
         free(cbuf);
         free(voices);
+        
+        free(in_buffers);
+        free(out_buffers);
     }
 	
 	void reset() {
@@ -331,7 +353,7 @@ public:
         return v[0] * (1 - a) + v[1] * a;
     }
 	
-	void setParameter(AUParameterAddress address, AUValue value) {
+	void setParameter(param_address_t address, param_value_t value) {
         switch (address) {
             case HarmParamKeycenter:
                 root_key = (int) clamp(value,0.f,47.f);
@@ -403,7 +425,7 @@ public:
         }
 	}
 
-	AUValue getParameter(AUParameterAddress address) {
+	param_value_t getParameter(param_address_t address) {
         switch (address) {
             case HarmParamKeycenter:
                 return (float) root_key;
@@ -458,12 +480,23 @@ public:
         return;
 	}
 	
+#ifdef __APPLE__
+    
 	void setBuffers(AudioBufferList* inBufferList, AudioBufferList* outBufferList) {
-		inBufferListPtr = inBufferList;
-		outBufferListPtr = outBufferList;
+        
+        for (int k = 0; k < n_channels; k++)
+        {
+            in_buffers[k] = (float*) inBufferList->mBuffers[k].mData;
+            out_buffers[k] = (float*) outBufferList->mBuffers[k].mData;
+        }
+        
 	}
     
-    virtual void handleMIDIEvent(AUMIDIEvent const& midiEvent) override {
+#else
+    
+#endif
+    
+    virtual void handleMIDIEvent(midi_event_t const& midiEvent) override {
         if (midiEvent.length != 3) return;
         uint8_t status = midiEvent.data[0] & 0xF0;
         uint8_t channel = midiEvent.data[0] & 0x0F; // works in omni mode.
@@ -505,8 +538,8 @@ public:
             }
         }
     }
-	
-	void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
+    
+	void process(frame_count_t frameCount, frame_count_t bufferOffset) override {
 		int channelCount = n_channels;
         sample_count += frameCount;
         
@@ -517,16 +550,14 @@ public:
 		for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
             int frameOffset = int(frameIndex + bufferOffset);
-			
-            int channel = 0;
-			
-            float* in  = (float*)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
-            float* out = (float*)outBufferListPtr->mBuffers[channel].mData + frameOffset;
+						
+            float* in  = in_buffers[0] + frameOffset;
+            float* out = out_buffers[0] + frameOffset;
             float* out2 = out;
             
             if (channelCount > 1)
             {
-                out2 = (float*)outBufferListPtr->mBuffers[1].mData + frameOffset;
+                out2 = out_buffers[1] + frameOffset;
             }
 
             cbuf[cix] = *in;
@@ -993,8 +1024,6 @@ public:
             }
        
         }
-        
-        //dispatch_semaphore_signal(sem);
     }
     
     void update_voices (void)
@@ -1219,6 +1248,7 @@ private:
 	//std::vector<FilterState> channelStates;
     int nfft = 2048;
     int l2nfft = 11;
+    FFTSetup fft_s;
     DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf;
     float * cbuf;
     int ncbuf = 4096;
@@ -1235,7 +1265,6 @@ private:
     int maxT = 600; // note nfft should be bigger than 3*maxT
     int cmask = ncbuf - 1;
     int voiced = 0;
-    FFTSetup fft_s;
 	float sampleRate = 44100.0;
     float baseTuning = 440.0;
     int keycenter = 0;
@@ -1283,8 +1312,11 @@ private:
     unsigned int midi_changed_sample_num = 0;
     unsigned int midi_changed = 1;
 
-	AudioBufferList* inBufferListPtr = nullptr;
-	AudioBufferList* outBufferListPtr = nullptr;
+//    AudioBufferList* inBufferListPtr = nullptr;
+//    AudioBufferList* outBufferListPtr = nullptr;
+    
+    float ** in_buffers;
+    float ** out_buffers;
 
 public:
 
@@ -1292,7 +1324,6 @@ public:
     float midi_note_number;
     int voice_notes[4];
     int root_key = 0;
-    dispatch_semaphore_t sem;
 };
 
 #endif /* FilterDSPKernel_hpp */

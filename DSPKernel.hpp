@@ -9,8 +9,22 @@
 #ifndef DSPKernel_h
 #define DSPKernel_h
 
-#import <AudioToolbox/AudioToolbox.h>
-#import <algorithm>
+#ifdef __APPLE__
+//#import <AudioToolbox/AudioToolbox.h>
+
+typedef frame_count_t AUAudioFrameCount;
+
+#if TARGET_IPHONE_SIMULATOR
+// iOS Simulator
+#elif TARGET_OS_IPHONE
+// iOS device
+#elif TARGET_OS_MAC
+// Other kinds of Mac OS
+#else
+#   error "Unknown Apple platform"
+#endif
+
+//#import <algorithm>
 
 template <typename T>
 T clamp(T input, T low, T high) {
@@ -20,7 +34,7 @@ T clamp(T input, T low, T high) {
 // Put your DSP code into a subclass of DSPKernel.
 class DSPKernel {
 public:
-	virtual void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) = 0;
+	virtual void process(frame_count_t frameCount, AUAudioFrameCount bufferOffset) = 0;
 	virtual void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) = 0;
 	
 	// Override to handle MIDI events.
