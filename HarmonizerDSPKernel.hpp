@@ -1,13 +1,13 @@
 /*
 	<samplecode>
 		<abstract>
-			A DSPKernel subclass implementing the realtime signal processing portion of the FilterDemo audio unit.
+			A DSPKernel subclass implementing the realtime signal processing algorithm.
 		</abstract>
 	</samplecode>
 */
 
-#ifndef FilterDSPKernel_hpp
-#define FilterDSPKernel_hpp
+#ifndef HarmonizerDSPKernel_hpp
+#define HarmonizerDSPKernel_hpp
 
 #ifdef __APPLE__
 #import "DSPKernel.hpp"
