@@ -22,6 +22,18 @@ typedef AudioTimeStamp timestamp_t;
 
 typedef AUMIDIEvent midi_event_t;
 
+#else
+#include "kiss_fft.h"
+typedef int32_t frame_count_t;
+typedef int32_t param_address_t;
+typedef float param_value_t;
+typedef float timestamp_t;
+
+template <typename T>
+T clamp(T input, T low, T high) {
+    return std::min(std::max(input, low), high);
+}
+
 #endif
 
 #import <vector>
@@ -153,7 +165,7 @@ public:
         fprintf(stderr,"**** init with %d channels! at %f Hz\n", n_channels, inSampleRate);
 		
 		sampleRate = float(inSampleRate);
-        
+#ifdef __APPLE__
         fft_s = vDSP_create_fftsetup(11, 2);
         
         fft_in.realp = (float *) calloc(2048, sizeof(float));
@@ -167,6 +179,11 @@ public:
         
         fft_buf.realp = (float *) calloc(2048, sizeof(float));
         fft_buf.imagp = (float *) calloc(2048, sizeof(float));
+
+#else
+        fft_s = kiss_fft_alloc(2048,0,NULL,0);
+
+#endif
         
         ncbuf = 4096;
         cbuf = (float *) calloc(ncbuf + 3, sizeof(float));
@@ -292,9 +309,8 @@ public:
 	}
     
     void fini() {
+#ifdef __APPLE__
         vDSP_destroy_fftsetup(fft_s);
-        delete grain_window;
-        delete grains;
         free(fft_in.realp);
         free(fft_in.imagp);
         free(fft_out.realp);
@@ -303,6 +319,17 @@ public:
         free(fft_out2.imagp);
         free(fft_buf.realp);
         free(fft_buf.imagp);
+#else
+        kiss_fft_free(fft_s);
+        free(fft_in);
+        free(fft_out);
+        free(fft_out2);
+        free(fft_buf);
+#endif
+
+        delete grain_window;
+        delete grains;
+
         free(cbuf);
         free(voices);
         
@@ -475,13 +502,11 @@ public:
                 return round(log2(ratios[addr & 0x3])*12);
         }
 	}
+#ifdef __APPLE__
 
 	void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         return;
 	}
-	
-#ifdef __APPLE__
-    
 	void setBuffers(AudioBufferList* inBufferList, AudioBufferList* outBufferList) {
         
         for (int k = 0; k < n_channels; k++)
@@ -491,10 +516,6 @@ public:
         }
         
 	}
-    
-#else
-    
-#endif
     
     virtual void handleMIDIEvent(midi_event_t const& midiEvent) override {
         if (midiEvent.length != 3) return;
@@ -538,6 +559,10 @@ public:
             }
         }
     }
+
+#else
+
+#endif
     
 	void process(frame_count_t frameCount, frame_count_t bufferOffset) override {
 		int channelCount = n_channels;
@@ -761,7 +786,8 @@ public:
             
 		}
 	}
-    
+
+#ifdef __APPLE__
     float estimate_pitch(int start_ix)
     {
         memset(fft_in.realp, 0, nfft * sizeof(float));
@@ -832,6 +858,97 @@ public:
         
         return Tsrt[nmed/2];
     }
+
+#else
+    float estimate_pitch(int start_ix)
+    {
+        memset(fft_in, 0, nfft * sizeof(float));
+
+        for (int k = 0; k < maxT; k++)
+        {
+            int ix = (start_ix + k) & cmask;
+            fft_in[k].r = cbuf[ix];
+        }
+
+        kiss_fft(fft_s,fft_in,fft_out);
+
+        memset(fft_in, 0, nfft * sizeof(float));
+
+        for (int k = maxT; k < 2*maxT; k++)
+        {
+            int ix = (start_ix + k) & cmask;
+            fft_in[k].r = cbuf[ix];
+        }
+
+        kiss_fft(fft_s,fft_in,fft_out2);
+
+        // conjugate small window and correlate with large window
+        for (int k = 0; k < nfft; k++)
+        {
+            float r1,c1,r2,c2;
+            r1 = fft_out[k].r; c1 = -fft_out[k].i;
+            r2 = fft_out2[k].r; c2 = fft_out2[k].i;
+
+            fft_in[k].r = r1*r2 - c1*c2;
+            fft_in[k].i = r1*c2 + r2*c1;
+        }
+        // inverse transform
+        kiss_fft(fft_s,fft_in,fft_out);
+
+        float sumsq_ = fft_out[0].r/nfft;
+        float sumsq = sumsq_;
+
+        float df,cmdf,cmdf1,cmdf2, sum = 0;
+
+        float period = 0.0;
+
+        cmdf2 = cmdf1 = cmdf = 1;
+        for (int k = 1; k < maxT; k++)
+        {
+            int ix1 = (start_ix + k) & cmask;
+            int ix2 = (start_ix + k + maxT) & cmask;
+
+            sumsq -= cbuf[ix1]*cbuf[ix1];
+            sumsq += cbuf[ix2]*cbuf[ix2];
+
+            df = sumsq + sumsq_ - 2 * fft_out[k].r/nfft;
+            sum += df;
+            cmdf2 = cmdf1; cmdf1 = cmdf;
+            cmdf = (df * k) / sum;
+
+            if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf && cmdf1 < threshold && k > 20)
+            {
+                period = (float) (k-1) + 0.5*(cmdf2 - cmdf)/(cmdf2 + cmdf - 2*cmdf1); break;
+            }
+        }
+
+        Tbuf[Tix++] = period;
+
+        if (Tix >= nmed)
+            Tix = 0;
+
+        memcpy(Tsrt, Tbuf, nmed * sizeof(float));
+
+        qsort(Tsrt, nmed, sizeof(float), compare_float);
+
+        return Tsrt[nmed/2];
+    }
+
+    int compare_float(const void * a, const void * b)
+    {
+        float aa = *(float*)a;
+        float bb = *(float*)b;
+
+        if (aa == bb)
+            return 0;
+        else if (aa > bb)
+            return 1;
+        else
+            return -1;
+    }
+
+
+#endif
     
     void findmark (void)
     {
@@ -974,9 +1091,12 @@ public:
         }
         if (n == 0)
             return;
-        
+
+#ifdef __APPLE__
         vDSP_vsort(midinotes, (vDSP_Length) n, 1);
-        
+#else
+        qsort(midinotes, n, sizeof(float), compare_float);
+#endif
         for (int j = 0; j < n; j++)
         {
             // ignore doubles
@@ -1248,8 +1368,13 @@ private:
 	//std::vector<FilterState> channelStates;
     int nfft = 2048;
     int l2nfft = 11;
+#ifdef __APPLE__
     FFTSetup fft_s;
     DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf;
+#else
+    kiss_fft_cfg fft_s, ifft_s;
+    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf;
+#endif
     float * cbuf;
     int ncbuf = 4096;
     int cix = 0;
