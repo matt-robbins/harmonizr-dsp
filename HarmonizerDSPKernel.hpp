@@ -9,6 +9,11 @@
 #ifndef HarmonizerDSPKernel_hpp
 #define HarmonizerDSPKernel_hpp
 
+
+#import <vector>
+#import <cmath>
+#import <sys/time.h>
+
 #ifdef __APPLE__
 #import "DSPKernel.hpp"
 #import "ParameterRamper.hpp"
@@ -24,6 +29,8 @@ typedef AUMIDIEvent midi_event_t;
 
 #else
 #include "kiss_fft.h"
+#import <algorithm>
+#include <android/log.h>
 typedef int32_t frame_count_t;
 typedef int32_t param_address_t;
 typedef float param_value_t;
@@ -35,10 +42,6 @@ T clamp(T input, T low, T high) {
 }
 
 #endif
-
-#import <vector>
-#import <cmath>
-#import <sys/time.h>
 
 template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
@@ -182,7 +185,10 @@ public:
 
 #else
         fft_s = kiss_fft_alloc(2048,0,NULL,0);
-
+        ifft_s = kiss_fft_alloc(2048,1,NULL,0);
+        fft_in = (kiss_fft_cpx *) calloc(2048, sizeof(float));
+        fft_out = (kiss_fft_cpx *) calloc(2048, sizeof(float));
+        fft_out2 = (kiss_fft_cpx *) calloc(2048, sizeof(float));
 #endif
         
         ncbuf = 4096;
@@ -305,6 +311,15 @@ public:
         triads[TRIAD_OCT].r2 = 2.0;
         
         memset(midinotes, 0, 128 * sizeof(int));
+
+        int chords_intervals[] = {0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
+                           0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
+                           0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+        };
+        for (int i = 0; i < 144; i++)
+        {
+            setParameter(HarmParamInterval+i,(float) chords_intervals[i]);
+        }
         
 	}
     
@@ -502,20 +517,31 @@ public:
                 return round(log2(ratios[addr & 0x3])*12);
         }
 	}
+
+    void setBuffers(float ** in, float ** out) {
+
+        for (int k = 0; k < n_channels; k++)
+        {
+            in_buffers[k] = in[k];
+            out_buffers[k] = out[k];
+        }
+    }
+
 #ifdef __APPLE__
 
 	void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         return;
 	}
+
 	void setBuffers(AudioBufferList* inBufferList, AudioBufferList* outBufferList) {
-        
+
         for (int k = 0; k < n_channels; k++)
         {
             in_buffers[k] = (float*) inBufferList->mBuffers[k].mData;
             out_buffers[k] = (float*) outBufferList->mBuffers[k].mData;
         }
-        
-	}
+
+    }
     
     virtual void handleMIDIEvent(midi_event_t const& midiEvent) override {
         if (midiEvent.length != 3) return;
@@ -563,8 +589,13 @@ public:
 #else
 
 #endif
-    
+
+#ifdef __APPLE__
 	void process(frame_count_t frameCount, frame_count_t bufferOffset) override {
+#else
+    void process(frame_count_t frameCount, frame_count_t bufferOffset) {
+#endif
+
 		int channelCount = n_channels;
         sample_count += frameCount;
         
@@ -860,65 +891,63 @@ public:
     }
 
 #else
-    float estimate_pitch(int start_ix)
-    {
-        memset(fft_in, 0, nfft * sizeof(float));
+    float estimate_pitch(int start_ix) {
+        memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
 
-        for (int k = 0; k < maxT; k++)
-        {
+        for (int k = 0; k < maxT; k++) {
             int ix = (start_ix + k) & cmask;
             fft_in[k].r = cbuf[ix];
         }
 
-        kiss_fft(fft_s,fft_in,fft_out);
+        kiss_fft(fft_s, fft_in, fft_out);
 
-        memset(fft_in, 0, nfft * sizeof(float));
+        //memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
 
-        for (int k = maxT; k < 2*maxT; k++)
-        {
+        for (int k = maxT; k < 2 * maxT; k++) {
             int ix = (start_ix + k) & cmask;
             fft_in[k].r = cbuf[ix];
         }
 
-        kiss_fft(fft_s,fft_in,fft_out2);
+        kiss_fft(fft_s, fft_in, fft_out2);
 
         // conjugate small window and correlate with large window
-        for (int k = 0; k < nfft; k++)
-        {
-            float r1,c1,r2,c2;
-            r1 = fft_out[k].r; c1 = -fft_out[k].i;
-            r2 = fft_out2[k].r; c2 = fft_out2[k].i;
+        for (int k = 0; k < nfft; k++) {
+            float r1, c1, r2, c2;
+            r1 = fft_out[k].r;
+            c1 = -fft_out[k].i;
+            r2 = fft_out2[k].r;
+            c2 = fft_out2[k].i;
 
-            fft_in[k].r = r1*r2 - c1*c2;
-            fft_in[k].i = r1*c2 + r2*c1;
+            fft_in[k].r = r1 * r2 - c1 * c2;
+            fft_in[k].i = r1 * c2 + r2 * c1;
         }
         // inverse transform
-        kiss_fft(fft_s,fft_in,fft_out);
+        kiss_fft(ifft_s, fft_in, fft_out);
 
-        float sumsq_ = fft_out[0].r/nfft;
+        float sumsq_ = fft_out[0].r / nfft;
         float sumsq = sumsq_;
 
-        float df,cmdf,cmdf1,cmdf2, sum = 0;
+        float df, cmdf, cmdf1, cmdf2, sum = 0;
 
         float period = 0.0;
 
         cmdf2 = cmdf1 = cmdf = 1;
-        for (int k = 1; k < maxT; k++)
-        {
+        for (int k = 1; k < maxT; k++) {
             int ix1 = (start_ix + k) & cmask;
             int ix2 = (start_ix + k + maxT) & cmask;
 
-            sumsq -= cbuf[ix1]*cbuf[ix1];
-            sumsq += cbuf[ix2]*cbuf[ix2];
+            sumsq -= cbuf[ix1] * cbuf[ix1];
+            sumsq += cbuf[ix2] * cbuf[ix2];
 
-            df = sumsq + sumsq_ - 2 * fft_out[k].r/nfft;
+            df = sumsq + sumsq_ - 2 * fft_out[k].r / nfft;
             sum += df;
-            cmdf2 = cmdf1; cmdf1 = cmdf;
+            cmdf2 = cmdf1;
+            cmdf1 = cmdf;
             cmdf = (df * k) / sum;
 
-            if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf && cmdf1 < threshold && k > 20)
-            {
-                period = (float) (k-1) + 0.5*(cmdf2 - cmdf)/(cmdf2 + cmdf - 2*cmdf1); break;
+            if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf && cmdf1 < threshold && k > 20) {
+                period = (float) (k - 1) + 0.5 * (cmdf2 - cmdf) / (cmdf2 + cmdf - 2 * cmdf1);
+                break;
             }
         }
 
@@ -929,24 +958,10 @@ public:
 
         memcpy(Tsrt, Tbuf, nmed * sizeof(float));
 
-        qsort(Tsrt, nmed, sizeof(float), compare_float);
+        std::sort(Tsrt, Tsrt+nmed);
 
-        return Tsrt[nmed/2];
+        return Tsrt[nmed / 2];
     }
-
-    int compare_float(const void * a, const void * b)
-    {
-        float aa = *(float*)a;
-        float bb = *(float*)b;
-
-        if (aa == bb)
-            return 0;
-        else if (aa > bb)
-            return 1;
-        else
-            return -1;
-    }
-
 
 #endif
     
@@ -1095,7 +1110,7 @@ public:
 #ifdef __APPLE__
         vDSP_vsort(midinotes, (vDSP_Length) n, 1);
 #else
-        qsort(midinotes, n, sizeof(float), compare_float);
+        std::sort(midinotes, midinotes + n);
 #endif
         for (int j = 0; j < n; j++)
         {
@@ -1416,7 +1431,7 @@ private:
     int midi_legato = 0;
     int auto_enable = 1;
     int midi_link = 1;
-    int n_auto = 4;
+    int n_auto = 3;
     int triad = -1;
     float interval_table[48];
     int interval_offsets[144];
