@@ -186,9 +186,9 @@ public:
 #else
         fft_s = kiss_fft_alloc(2048,0,NULL,0);
         ifft_s = kiss_fft_alloc(2048,1,NULL,0);
-        fft_in = (kiss_fft_cpx *) calloc(2048, sizeof(float));
-        fft_out = (kiss_fft_cpx *) calloc(2048, sizeof(float));
-        fft_out2 = (kiss_fft_cpx *) calloc(2048, sizeof(float));
+        fft_in = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
+        fft_out = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
+        fft_out2 = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
 #endif
         
         ncbuf = 4096;
@@ -1454,11 +1454,11 @@ private:
 
 //    AudioBufferList* inBufferListPtr = nullptr;
 //    AudioBufferList* outBufferListPtr = nullptr;
-    
-    float ** in_buffers;
-    float ** out_buffers;
 
 public:
+
+    float ** in_buffers;
+    float ** out_buffers;
 
     float note_number = -1.0;
     float midi_note_number;
