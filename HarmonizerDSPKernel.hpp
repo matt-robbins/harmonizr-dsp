@@ -130,6 +130,18 @@ enum {
     HarmParamInterval
 };
 
+enum {
+    HarmPresetChords=0,
+    HarmPresetDiatonic,
+    HarmPresetChromatic,
+    HarmPresetBarbershop,
+    HarmPresetMIDI,
+    HarmPresetBohemian,
+    HarmPresetBass,
+    HarmPreset4ths,
+    HarmPresetModes
+};
+
 static inline double squared(double x) {
     return x * x;
 }
@@ -525,6 +537,121 @@ public:
             in_buffers[k] = in[k];
             out_buffers[k] = out[k];
         }
+    }
+
+
+    void setPreset(int preset_ix_)
+    {
+        int chords_intervals[] = {
+                0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
+                0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
+                0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+        };
+        int diatonic_intervals[] = {
+                0,4,7,12, -1,3,6,11, 0,5,10,12, 1,4,9,13, 0,3,8,12, 0,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,12, 1,2,6,13, 0,1,5,12, // major
+                0,3,7,12, -1,2,6,11, 0,5,10,12, 0,4,9,12, -1,3,8,11, -2,2,7,10, 1,6,9,13, 0,5,8,12, -1,4,7,11, 0,3,6,10, 2,5,9,14, 1,4,8,13, // minor
+                0,4,7,10, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+        };
+        int chromatic_intervals[] = {
+                0,4,7,12, 0,3,6,12, 0,3,7,12, 0,3,9,12, 0,3,8,12, 0,4,7,12, 0,3,9,12, 0,5,9,12, 0,4,8,12, 0,5,8,12, 0,4,7,12, 0,3,6,12, // major
+                0,3,7,12, 0,4,7,12, 0,3,9,12, 0,4,9,12, 0,3,8,12, 0,3,7,12, 0,6,9,12, 0,4,7,12, 0,4,7,12, 0,3,6,12, 0,5,9,12, 0,3,7,12, // minor
+                0,4,7,12, 0,3,9,12, 0,2,8,12, 0,4,7,12, 0,3,6,12, 0,5,7,12, 0,4,6,12, 0,3,5,12, 0,2,4,12, 0,3,7,12, 0,2,6,12, 0,1,5,12, //dom
+        };
+        int barbershop_intervals[] = {
+                0,4,7,12, 0,3,5,9, 0,3,5,9, 0,3,6,9, 0,3,8,12, 0,2,6,9, 0,3,5,9, 0,5,9,12, 0,3,6,9, 0,3,5,9, 0,3,6,9, 0,3,6,8, // major
+                0,3,7,12, 0,4,7,10, 0,3,5,9, 0,4,9,12, 0,3,6,8, 0,3,7,9, 0,3,6,8, 0,5,8,12, 0,4,7,10, 0,3,6,10, 0,4,7,10, 0,3,6,8, // minor
+                0,4,7,10, 0,3,6,9, 0,3,5,9, 0,3,6,9, 0,3,6,8, 0,2,6,9, 0,3,5,9, 0,3,5,9, 0,2,4,8, 0,3,6,9, 0,2,6,9, 0,4,7,10 //dom
+        };
+        int justmidi_intervals[] = {
+                0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
+                0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
+                0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+        };
+
+        int bohemian_intervals[] = {};
+        int bass_intervals[] = {};
+        int fourths_intervals[] = {};
+        int modes_intervals[] = {};
+
+        int * intervals = chords_intervals;
+
+
+        preset_ix = preset_ix_;
+        switch (preset_ix_)
+        {
+            case HarmPresetChords:
+                intervals = chords_intervals;
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,3);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                break;
+            case HarmPresetDiatonic:
+                intervals = diatonic_intervals;
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,3);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                break;
+            case HarmPresetChromatic:
+                intervals = chromatic_intervals;
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,3);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                break;
+            case HarmPresetBarbershop:
+                intervals = barbershop_intervals;
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,2);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                break;
+            case HarmPresetMIDI:
+                intervals = chords_intervals;
+                setParameter(HarmParamNvoices,1);
+                setParameter(HarmParamInversion,0);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                break;
+            case HarmPresetBohemian:
+                intervals = chords_intervals;
+                break;
+            case HarmPresetBass:
+                setParameter(HarmParamNvoices,1);
+                setParameter(HarmParamInversion,1);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,0);
+                intervals = chords_intervals;
+                break;
+            case HarmPreset4ths:
+                setParameter(HarmParamNvoices,1);
+                setParameter(HarmParamInversion,1);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,0);
+                intervals = chords_intervals;
+                break;
+            case HarmPresetModes:
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,3);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
+                intervals = chords_intervals;
+                break;
+            default:
+                preset_ix = 0;
+                return;
+        }
+
+        for (int i = 0; i < 144; i++)
+        {
+            setParameter(HarmParamInterval+i,(float) intervals[i]);
+        }
+
+    }
+    int getPreset()
+    {
+        return preset_ix;
     }
 
 #ifdef __APPLE__
@@ -1452,6 +1579,8 @@ private:
     unsigned int midi_changed_sample_num = 0;
     unsigned int midi_changed = 1;
 
+    int preset_ix = 0;
+
 //    AudioBufferList* inBufferListPtr = nullptr;
 //    AudioBufferList* outBufferListPtr = nullptr;
 
@@ -1464,6 +1593,8 @@ public:
     float midi_note_number;
     int voice_notes[4];
     int root_key = 0;
+
+    std::string preset_names[9] = {"Chords","Diatonic","Chromatic","Barbershop","JustMidi","Bohemian?","Bass!","4ths","Modes"};
 };
 
 #endif /* FilterDSPKernel_hpp */
