@@ -674,6 +674,7 @@ public:
         if (midiEvent.length != 3) return;
         uint8_t status = midiEvent.data[0] & 0xF0;
         uint8_t channel = midiEvent.data[0] & 0x0F; // works in omni mode.
+        
         if (channel != 0)
             return;
         
@@ -823,8 +824,8 @@ public:
                     continue;
                 }
                 
-//                if (voices[vix].midinote == -1 || (vix > n_auto && !midi_enable))
-//                    continue;
+                if (vix > n_auto && !midi_enable)
+                    continue;
                 
                 float unvoiced_offset = 0;
 //                if (!voiced && vix > 5)
@@ -1147,6 +1148,11 @@ public:
         int min_ix = -1;
         midi_changed_sample_num = sample_count;
         midi_changed = 1;
+        
+        if (!midi_enable)
+        {
+            return;
+        }
         
         if (!midi_legato)
         {
