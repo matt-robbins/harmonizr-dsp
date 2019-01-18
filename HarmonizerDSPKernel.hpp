@@ -322,7 +322,8 @@ public:
         triads[TRIAD_OCT].r1 = 0.5;
         triads[TRIAD_OCT].r2 = 2.0;
         
-        memset(midinotes, 0, 128 * sizeof(int));
+        memset(midinotes, 0, 128 * sizeof(float));
+        memset(keys_down, 0, 128 * sizeof(int));
 
         int chords_intervals[] = {0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
                            0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
@@ -705,7 +706,14 @@ public:
                 }
                 if (num == 64)
                 {
-                    midi_legato = (float) (val > 0);
+                    if ((float) (val > 0))
+                    {
+                        pedal_down();
+                    }
+                    else
+                    {
+                        pedal_up();
+                    }
                 }
                 if (num == 123) { // all notes off
 
@@ -1150,6 +1158,8 @@ public:
         midi_changed_sample_num = sample_count;
         midi_changed = 1;
         
+        keys_down[note] = 1;
+        
         if (!midi_enable)
         {
             return;
@@ -1208,6 +1218,13 @@ public:
     
     void remnote(int note)
     {
+        keys_down[note] = 0;
+        
+        if (midi_pedal)
+        {
+            return;
+        }
+        
         for (int k = 3; k < nvoices; k++)
         {
             if (voices[k].midinote == note)
@@ -1219,6 +1236,24 @@ public:
         
         midi_changed_sample_num = sample_count;
         midi_changed = 1;
+    }
+        
+    void pedal_down()
+    {
+        midi_pedal = 1;
+    }
+        
+    void pedal_up()
+    {
+        midi_pedal = 0;
+        for (int k = 3; k < nvoices; k++)
+        {
+            if (!keys_down[voices[k].midinote])
+            {
+                voices[k].lastnote = voices[k].midinote;
+                voices[k].midinote = -1;
+            }
+        }
     }
     
     void analyze_harmony(void)
@@ -1562,7 +1597,9 @@ private:
     voice_t * voices;
     int inversion = 2;
     int midi_enable = 1;
+    int keys_down[128];
     int midi_legato = 0;
+    int midi_pedal = 0;
     int auto_enable = 1;
     int midi_link = 1;
     int n_auto = 3;
