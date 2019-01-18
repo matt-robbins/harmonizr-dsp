@@ -15,7 +15,7 @@
 #import <sys/time.h>
 
 #ifdef __APPLE__
-#import "DSPKernel.hpp"
+#import "../harmonizr-dsp/DSPKernel.hpp"
 #import "ParameterRamper.hpp"
 #include <Accelerate/Accelerate.h>
 #include <dispatch/dispatch.h>
@@ -428,6 +428,7 @@ public:
                 break;
             case HarmParamMidi:
                 midi_enable = (int) clamp(value,0.f,1.f);
+                printf("set midi_enable to %d\n", midi_enable);
                 break;
             case HarmParamMidiLink:
                 midi_link = (int) clamp(value,0.f,1.f);
@@ -700,7 +701,7 @@ public:
                 uint8_t val = midiEvent.data[2];
                 if (num == 11)
                 {
-                    midigain = (float) val / 127.0;
+                    midigain = (float) val / 64.0;
                 }
                 if (num == 64)
                 {

@@ -12,7 +12,7 @@
 #ifdef __APPLE__
 //#import <AudioToolbox/AudioToolbox.h>
 
-typedef frame_count_t AUAudioFrameCount;
+typedef AUAudioFrameCount frame_count_t;
 
 #if TARGET_IPHONE_SIMULATOR
 // iOS Simulator
@@ -46,5 +46,6 @@ private:
 	void handleOneEvent(AURenderEvent const* event);
 	void performAllSimultaneousEvents(AUEventSampleTime now, AURenderEvent const*& event);
 };
+#endif
 
 #endif /* DSPKernel_h */
