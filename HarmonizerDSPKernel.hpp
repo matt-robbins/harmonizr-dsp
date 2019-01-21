@@ -565,18 +565,33 @@ public:
                 0,4,7,10, 0,3,6,9, 0,3,5,9, 0,3,6,9, 0,3,6,8, 0,2,6,9, 0,3,5,9, 0,3,5,9, 0,2,4,8, 0,3,6,9, 0,2,6,9, 0,4,7,10 //dom
         };
         int justmidi_intervals[] = {
-                0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
-                0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
-                0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+            -12,-12,-12,-12, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "major"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "minor"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "dom"
         };
 
-        int bohemian_intervals[] = {};
-        int bass_intervals[] = {};
-        int fourths_intervals[] = {};
-        int modes_intervals[] = {};
+        int bohemian_intervals[] = {
+            0,4,7,9, 0,3,6,8, 0,3,7,10, 0,3,6,9, 0,3,5,8, 0,4,7,9, 0,3,6,9, 0,2,5,9, 0,3,6,9, 0,3,5,8, 0,2,6,9, 0,1,5,8, // major
+            0,3,7,10, 0,3,6,8, 0,3,6,9, 0,4,7,9, 0,3,5,8, 0,3,6,9, 0,3,6,9, 0,3,5,8, 0,3,6,9, 0,3,6,10, 0,4,7,10, 0,3,6,9, // minor
+            0,4,7,10, 0,3,6,9, 0,3,5,8, 0,3,6,9, 0,3,6,8, 0,2,5,9, 0,3,5,9, 0,3,5,9, 0,2,6,9, 0,1,5,8, 0,2,6,9, 0,3,6,9 //dom
+        };
+        int bass_intervals[] = {
+            -12,-12,-12,-12, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "major"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "minor"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "dom"
+        };
+        int fourths_intervals[] = {
+            0,-5,7,12, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "major"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "minor"
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, // "dom"
+        };
+        int modes_intervals[] = {
+            0,4,7,11, 0,3,6,10, 0,3,7,10, 0,3,6,9, 0,3,7,10, 0,4,7,11, 0,3,6,10, 0,4,7,10, 0,4,8,11, 0,3,7,10, 0,4,7,11, 0,3,6,10, // major
+            0,3,7,11, 0,3,7,10, 0,3,7,10, 0,4,8,11, 0,4,7,10, 0,4,7,10, 0,4,7,10, 0,4,7,10, 0,4,7,11, 0,3,6,10, 0,3,6,10, 0,3,6,10, // minor
+            0,4,7,10, 0,3,7,10, 0,3,7,10, 0,3,6,10, 0,3,6,10, 0,4,7,11, 0,3,7,10, 0,3,7,10, 0,3,7,10, 0,3,7,10, 0,4,7,11, 0,4,7,10 //dom
+        };
 
         int * intervals = chords_intervals;
-
 
         preset_ix = preset_ix_;
         switch (preset_ix_)
@@ -610,35 +625,39 @@ public:
                 setParameter(HarmParamTriad,-1);
                 break;
             case HarmPresetMIDI:
-                intervals = chords_intervals;
+                intervals = justmidi_intervals;
                 setParameter(HarmParamNvoices,1);
                 setParameter(HarmParamInversion,0);
                 setParameter(HarmParamAuto,0);
-                setParameter(HarmParamTriad,-1);
+                setParameter(HarmParamTriad,0);
                 break;
             case HarmPresetBohemian:
-                intervals = chords_intervals;
+                intervals = bohemian_intervals;
+                setParameter(HarmParamNvoices,4);
+                setParameter(HarmParamInversion,4);
+                setParameter(HarmParamAuto,0);
+                setParameter(HarmParamTriad,-1);
                 break;
             case HarmPresetBass:
+                intervals = bass_intervals;
                 setParameter(HarmParamNvoices,1);
                 setParameter(HarmParamInversion,1);
                 setParameter(HarmParamAuto,0);
                 setParameter(HarmParamTriad,0);
-                intervals = chords_intervals;
                 break;
             case HarmPreset4ths:
+                intervals = fourths_intervals;
                 setParameter(HarmParamNvoices,1);
                 setParameter(HarmParamInversion,1);
                 setParameter(HarmParamAuto,0);
                 setParameter(HarmParamTriad,0);
-                intervals = chords_intervals;
                 break;
             case HarmPresetModes:
+                intervals = modes_intervals;
                 setParameter(HarmParamNvoices,4);
                 setParameter(HarmParamInversion,3);
                 setParameter(HarmParamAuto,0);
                 setParameter(HarmParamTriad,-1);
-                intervals = chords_intervals;
                 break;
             default:
                 preset_ix = 0;
@@ -1160,10 +1179,10 @@ public:
         
         keys_down[note] = 1;
         
-        if (!midi_enable)
-        {
-            return;
-        }
+//        if (!midi_enable)
+//        {
+//            return;
+//        }
         
         if (!midi_legato)
         {
