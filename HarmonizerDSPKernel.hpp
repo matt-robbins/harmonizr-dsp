@@ -127,6 +127,7 @@ enum {
     HarmParamSpeed,
     HarmParamTuning,
     HarmParamThreshold,
+    HarmParamStereo,
     HarmParamInterval
 };
 
@@ -141,6 +142,14 @@ enum {
     HarmPreset4ths,
     HarmPresetModes
 };
+
+enum {
+    StereoModeNormal=0,
+    StereoModeMono,
+    StereoModeSplit
+};
+
+#define N_AUTO 4
 
 static inline double squared(double x) {
     return x * x;
@@ -462,6 +471,9 @@ public:
             case HarmParamThreshold:
                 threshold = value;
                 break;
+            case HarmParamStereo:
+                stereo_mode = value;
+                break;
             case HarmParamInterval:
             default:
                 int addr = (int) address - (int) HarmParamInterval;
@@ -515,6 +527,8 @@ public:
                 return baseTuning;
             case HarmParamThreshold:
                 return threshold;
+            case HarmParamStereo:
+                return stereo_mode;
             case HarmParamInterval:
             default:
                 int addr = (int) address - (int) HarmParamInterval;
@@ -692,7 +706,6 @@ public:
     }
     
     virtual void handleMIDIEvent(midi_event_t const& midiEvent) override {
-        if (midiEvent.length != 3) return;
         uint8_t status = midiEvent.data[0] & 0xF0;
         uint8_t channel = midiEvent.data[0] & 0x0F; // works in omni mode.
         
@@ -737,6 +750,12 @@ public:
                 if (num == 123) { // all notes off
 
                 }
+                break;
+            }
+            case 0xC0 : {
+                //uint8_t num = midiEvent.data[1];
+                patch_number = midiEvent.data[1];
+                
                 break;
             }
         }
@@ -828,7 +847,10 @@ public:
             }
             
             *out = *in * voicegain / 2;
-            *out2 = *out;
+            if (stereo_mode != StereoModeSplit)
+            {
+                *out2 = *out;
+            }
             
             int nonvoiced_count = (int) (voicegain > 0);
             
@@ -956,8 +978,20 @@ public:
                     
                     float hgain = g.vix ? harmgain : 1.0;
                     
-                    *out += u * hgain * w * g.gain * voices[g.vix].gain * (g.pan + 1.0)/2;
-                    *out2 += u * hgain * w * g.gain * voices[g.vix].gain * (-g.pan + 1)/2;
+                    switch (stereo_mode)
+                    {
+                        case StereoModeNormal:
+                            *out += u * hgain * w * g.gain * voices[g.vix].gain * (g.pan + 1.0)/2;
+                            *out2 += u * hgain * w * g.gain * voices[g.vix].gain * (-g.pan + 1)/2;
+                            break;
+                        case StereoModeMono:
+                            *out += u * hgain * w * g.gain * voices[g.vix].gain;
+                            *out2 = *out;
+                            break;
+                        case StereoModeSplit:
+                            *out2 += u * hgain * w * g.gain * voices[g.vix].gain;
+                            break;
+                    }
                     
                     g.ix += g.ratio;
                     
@@ -1188,7 +1222,7 @@ public:
         {
             // look for one with the same note and take that if we can, or the empty one with
             // the closest last note to the one we want
-            for (int k = 3; k < nvoices; k++)
+            for (int k = n_auto; k < nvoices; k++)
             {
                 dist = abs(voices[k].lastnote - note);
                 if ((dist < min_dist && voices[k].midinote < 0) || voices[k].midinote == note)
@@ -1213,7 +1247,7 @@ public:
         // otherwise, we are stealing
         min_dist = 129;
         min_ix = -1;
-        for (int k = 3; k < nvoices; k++)
+        for (int k = n_auto; k < nvoices; k++)
         {
             dist = abs(voices[k].midinote - note);
             if (dist < min_dist)
@@ -1230,7 +1264,7 @@ public:
         //voices[min_ix].nextgrain = 0;
         
         if (++voice_ix > nvoices)
-            voice_ix = 3;
+            voice_ix = n_auto;
         
         return;
     }
@@ -1244,7 +1278,7 @@ public:
             return;
         }
         
-        for (int k = 3; k < nvoices; k++)
+        for (int k = n_auto; k < nvoices; k++)
         {
             if (voices[k].midinote == note)
             {
@@ -1265,7 +1299,7 @@ public:
     void pedal_up()
     {
         midi_pedal = 0;
-        for (int k = 3; k < nvoices; k++)
+        for (int k = n_auto; k < nvoices; k++)
         {
             if (!keys_down[voices[k].midinote])
             {
@@ -1397,8 +1431,6 @@ public:
             return;
         }
         
-        //int n_auto = 4;
-            
         float f = log2f (sampleRate / (T * baseTuning));
         
         float note_f = f * 12.0;
@@ -1621,7 +1653,8 @@ private:
     int midi_pedal = 0;
     int auto_enable = 1;
     int midi_link = 1;
-    int n_auto = 3;
+    int stereo_mode = StereoModeSplit;
+    int n_auto = 4;
     int triad = -1;
     float interval_table[48];
     int interval_offsets[144];
@@ -1656,6 +1689,8 @@ public:
     float midi_note_number;
     int voice_notes[4];
     int root_key = 0;
+        
+    int patch_number = 3;
 
     std::string preset_names[9] = {"Chords","Diatonic","Chromatic","Barbershop","JustMidi","Bohemian?","Bass!","4ths","Modes"};
 };

@@ -10,9 +10,13 @@
 #define DSPKernel_h
 
 #ifdef __APPLE__
-//#import <AudioToolbox/AudioToolbox.h>
+#import <AudioToolbox/AudioToolbox.h>
+#import <algorithm>
 
 typedef AUAudioFrameCount frame_count_t;
+typedef AUParameterAddress param_address_t;
+typedef AUValue value_t;
+typedef AudioTimeStamp timestamp_t;
 
 #if TARGET_IPHONE_SIMULATOR
 // iOS Simulator
@@ -41,10 +45,14 @@ public:
 	virtual void handleMIDIEvent(AUMIDIEvent const& midiEvent) {}
 	
 	void processWithEvents(AudioTimeStamp const* timestamp, AUAudioFrameCount frameCount, AURenderEvent const* events);
+    
+    dispatch_semaphore_t sem;
+    int program_change = 0;
 
 private:
 	void handleOneEvent(AURenderEvent const* event);
 	void performAllSimultaneousEvents(AUEventSampleTime now, AURenderEvent const*& event);
+    
 };
 #endif
 
