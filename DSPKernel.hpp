@@ -43,15 +43,19 @@ public:
 	
 	// Override to handle MIDI events.
 	virtual void handleMIDIEvent(AUMIDIEvent const& midiEvent) {}
+    void sendMIDIOutput(AUEventSampleTime now, AUMIDIOutputEventBlock midiOut);
 	
-	void processWithEvents(AudioTimeStamp const* timestamp, AUAudioFrameCount frameCount, AURenderEvent const* events);
+	void processWithEvents(AudioTimeStamp const* timestamp, AUAudioFrameCount frameCount, AURenderEvent const* events, AUMIDIOutputEventBlock midiOut);
     
     dispatch_semaphore_t sem;
     int program_change = 0;
+    
+    AUMIDIEvent output_events[10];
+    int n_output_events = 0;
 
 private:
 	void handleOneEvent(AURenderEvent const* event);
-	void performAllSimultaneousEvents(AUEventSampleTime now, AURenderEvent const*& event);
+	void performAllSimultaneousEvents(AUEventSampleTime now, AURenderEvent const*& event, AUMIDIOutputEventBlock midiOut);
     
 };
 #endif

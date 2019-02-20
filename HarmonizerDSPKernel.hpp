@@ -155,13 +155,14 @@ static inline double squared(double x) {
     return x * x;
 }
 
-static float inc_to_target(float value, float target, float c, float maxrate_up, float maxrate_down)
+static inline float inc_to_target(float value, float target, float c, float maxrate_up, float maxrate_down)
 {
     float diff = c * (target - value);
-    if (sgn(diff) > 0 && diff > maxrate_up)
+    int sign = sgn(diff);
+    if (sign > 0 && diff > maxrate_up)
         diff = maxrate_up;
     
-    else if (sgn(diff) < 0 && diff < maxrate_down)
+    else if (sign < 0 && diff < maxrate_down)
         diff = maxrate_down;
     
     return value + diff;
@@ -773,6 +774,7 @@ public:
 
 		int channelCount = n_channels;
         sample_count += frameCount;
+        n_output_events = 0;
         
         if (bufferOffset != 0)
             fprintf(stderr, "buffer_offset = %d\n", bufferOffset);
@@ -1069,7 +1071,14 @@ public:
             }
         }
         
+        if (sumsq < 0.01)
+        {
+            period = 0;
+        }
+        
         Tbuf[Tix++] = period;
+        
+        //fprintf(stderr, "%f\n", sumsq);
         
         if (Tix >= nmed)
             Tix = 0;
@@ -1351,14 +1360,18 @@ public:
             
             int ix = (int) midinotes[j] % 12;
             
-            if (octave[(ix+2)%12] && octave[(ix+6)%12])
+            if (octave[(ix+4)%12] && octave[(ix+10)%12])
             {
                 // 7th
+                root_key = ix+ 24;
+                break;
             }
             
             if (octave[(ix+3)%12] && octave[(ix+6)%12])
             {
                 // dim
+                root_key = ((ix+2)%12) + 24;
+                break;
             }
             
             if (octave[(ix+3)%12] && octave[(ix+7)%12])
@@ -1368,10 +1381,28 @@ public:
                 break;
             }
             
+            if (octave[(ix+4)%12] && octave[(ix+7)%12] && octave[(ix+11)%12])
+            {
+                root_key = ((ix+7)%12);
+                break;
+            }
+            
             if (octave[(ix+4)%12] && octave[(ix+7)%12])
             {
                 //maj
                 root_key = ix;
+                break;
+            }
+            if (octave[(ix+4)%12])
+            {
+                //maj
+                root_key = ix;
+                break;
+            }
+            if (octave[(ix+3)%12])
+            {
+                //min
+                root_key = ix+12;
                 break;
             }
             
@@ -1381,6 +1412,26 @@ public:
             }
        
         }
+    }
+        
+    void send_note_on(int nn, int vel)
+    {
+        // queue MIDI note on messages
+        output_events[n_output_events].length = 3;
+        output_events[n_output_events].data[0] = 0x90;
+        output_events[n_output_events].data[1] = nn;
+        output_events[n_output_events].data[2] = vel;
+        n_output_events++;
+    }
+        
+    void send_note_off(int nn, int vel)
+    {
+        // queue MIDI note off
+        output_events[n_output_events].length = 3;
+        output_events[n_output_events].data[0] = 0x80;
+        output_events[n_output_events].data[1] = nn;
+        output_events[n_output_events].data[2] = vel;
+        n_output_events++;
     }
     
     void update_voices (void)
@@ -1410,23 +1461,31 @@ public:
         {
             midi_changed = 0;
             //printf("%d samples since last midi note\n", sample_count - midi_changed_sample_num);
-            if (midi_link)
-            {
-                analyze_harmony();
-            }
+            if (midi_link) { analyze_harmony(); }
         }
         
         static int was_voiced = 0;
         
         if (!voiced)
         {
+            if (was_voiced)
+            {
+                //send_note_off(midi_note_number, 100);
+                for (int k = 0; k < n_auto; k++)
+                {
+                    send_note_off(voice_notes[k], 100);
+                }
+            }
+            
             note_number = -1.0;
             midi_note_number = -1.0;
             last_nn = -1;
-            for (int k = 0; k < 4; k++)
+            
+            for (int k = 0; k < n_auto; k++)
             {
                 voice_notes[k] = -1;
             }
+            
             was_voiced = 0;
             return;
         }
@@ -1436,22 +1495,29 @@ public:
         float note_f = f * 12.0;
         int nn = (int) round(note_f);
         
+        int old_midi_note_number = midi_note_number;
         midi_note_number = nn + 69;
         
         //fprintf(stderr, "%f,%d\n",note_f,last_nn);
         
-        if (fabs(note_f - (float) last_nn) < 0.6)
+        if (!was_voiced)
         {
-            midi_note_number = last_nn + 69;
+            //send_note_on(midi_note_number, 100);
         }
         else
         {
-            last_nn = nn;
-            midi_note_number = nn + 69;
+            // note didn't change
+            if (fabs(note_f - (float) last_nn) < 0.6)
+            {
+                midi_note_number = last_nn + 69;
+            }
+            else // note changed
+            {
+                last_nn = nn;
+//                send_note_on(midi_note_number, 100);
+//                send_note_off(old_midi_note_number, 100);
+            }
         }
-        
-        //float error = (note_f - (float)nn)/12;
-        //float error_ratio = powf(2.0, error);
         
         int root = root_key % 12;
         int quality = root_key / 12;
@@ -1461,59 +1527,27 @@ public:
         
         //last_nn = nn;
         
-        for (int k = 0; k < 4; k++)
+        // convert interval table to midi notes for auto voices.
+        for (int k = 0; k < n_auto; k++)
         {
-            if (k >= n_auto)
-            {
-                voice_notes[k] = -1;
-            }
-            else {
-                voice_notes[k] = midi_note_number + interval_offsets[k + (interval*4) + (quality*48)];
-            }
+            voice_notes_old[k] = voice_notes[k];
+            voice_notes[k] = midi_note_number + interval_offsets[k + (interval*4) + (quality*48)];
             
             if (k > inversion)
             {
                 voice_notes[k] -= 12;
             }
             
+            if (voice_notes[k] != voice_notes_old[k])
+            {
+                send_note_on(voice_notes[k], 100);
+                if (voice_notes_old[k] >= 0)
+                    send_note_off(voice_notes_old[k], 100);
+            }
+            
             voices[k].midinote = voice_notes[k];
         }
         
-        //int start = (autotune || (triad >= 0)) ? 0 : 1;
-
-//        if (triad >= 0)
-//        {
-//            voices[0].midinote = 0;
-//            voices[1].midinote = 0;
-//            voices[2].midinote = 0;
-//            voices[1].target_ratio = voices[1].ratio = triads[triad].r1;
-//            voices[2].target_ratio = voices[2].ratio = triads[triad].r2;
-//        }
-        
-//        else if (auto_enable)
-//        {
-//            for (int k = start; k < n_auto; k++)
-//            {
-//                //voices[k].midinote = 0;
-//
-//                if (quality == 0)
-//                {
-//                    voices[k].target_ratio = major_chord_table[interval][k];
-//                }
-//                else if (quality == 1)
-//                {
-//                    voices[k].target_ratio = minor_chord_table[interval][k];
-//                }
-//                else if (quality == 2)
-//                {
-//                    voices[k].target_ratio = blues_chord_table[interval][k];
-//                }
-//
-//                if (k > inversion)
-//                    voices[k].target_ratio *= 0.5;
-//            }
-//        }
-//        else
         if (!auto_enable)
         {
             for (int k = 0; k < n_auto; k++)
@@ -1522,12 +1556,13 @@ public:
             }
         }
         
+        // compute target resampling ratios for all voices.
         for (int k = 0; k < nvoices; k++)
         {
             if (voices[k].midinote < 0)
                 continue;
             
-            if (triad >= 0 && k < 4)
+            if (triad >= 0 && k < n_auto)
             {
                 voices[k].target_ratio = major_chord_table[0][k];
                 
@@ -1563,17 +1598,14 @@ public:
                 voices[k].midinote_ += diff;
             }
             
-            //voices[k].midinote_ = sgn(voices[k].midinote - voices[k].midinote_) * fmin(1.0, abs(voices[k].midinote - voices[k].midinote_));
-            
-            //voices[0].midinote = 0;
-            
             float error_hsteps = (voices[k].midinote_ - 69) - note_f;
+            
             if (k == 0)
             {
                 error_hsteps *= corr_strength;
             }
+            
             voices[k].target_ratio = powf(2.0, error_hsteps/12);
-            //voices[k].ratio = voices[k].target_ratio;
         }
         
         was_voiced = voiced;
@@ -1592,7 +1624,7 @@ public:
             }
             else
             {
-            voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
+                voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
             }
         }
     }
@@ -1620,6 +1652,8 @@ private:
     int nmed = 5;
     float Tbuf[5];
     float Tsrt[5];
+    int nAmpl = 50;
+    float Abuf[50];
     int Tix;
     float pitchmark[3] = {0,-1,-1};
     int maxT = 600; // note nfft should be bigger than 3*maxT
@@ -1648,7 +1682,7 @@ private:
     voice_t * voices;
     int inversion = 2;
     int midi_enable = 1;
-    int keys_down[128];
+    
     int midi_legato = 0;
     int midi_pedal = 0;
     int auto_enable = 1;
@@ -1676,6 +1710,8 @@ private:
     unsigned int midi_changed = 1;
 
     int preset_ix = 0;
+        
+    int voice_notes_old[N_AUTO];
 
 //    AudioBufferList* inBufferListPtr = nullptr;
 //    AudioBufferList* outBufferListPtr = nullptr;
@@ -1687,12 +1723,15 @@ public:
 
     float note_number = -1.0;
     float midi_note_number;
-    int voice_notes[4];
+    int voice_notes[N_AUTO];
+    int keys_down[128];
     int root_key = 0;
         
     int patch_number = 3;
 
     std::string preset_names[9] = {"Chords","Diatonic","Chromatic","Barbershop","JustMidi","Bohemian?","Bass!","4ths","Modes"};
+    //midi_event_t output_events[10];
+    //int n_output_events;
 };
 
 #endif /* FilterDSPKernel_hpp */
