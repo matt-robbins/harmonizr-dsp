@@ -20,6 +20,8 @@
 #include <Accelerate/Accelerate.h>
 #include <dispatch/dispatch.h>
 
+#include "TestAudioData.h"
+
 typedef AUAudioFrameCount frame_count_t;
 typedef AUParameterAddress param_address_t;
 typedef AUValue param_value_t;
@@ -56,6 +58,7 @@ typedef struct grain_s
     float gain;
     float pan;
     int vix;
+    int synth_ix;
 } grain_t;
 
 typedef struct voice_s
@@ -70,6 +73,9 @@ typedef struct voice_s
     float ix2;
     float gain;
     float target_gain;
+    float vibrato_rate;
+    float vibrato_amp;
+    float vib_phase;
     int xfade_ix;
     int xfade_dur;
     int midinote;
@@ -204,6 +210,15 @@ public:
         
         fft_buf.realp = (float *) calloc(2048, sizeof(float));
         fft_buf.imagp = (float *) calloc(2048, sizeof(float));
+        
+        A_model.realp = (float *) calloc(100, sizeof(float));
+        A_model.imagp = (float *) calloc(100, sizeof(float));
+        
+        Hann.realp = (float *) calloc(2048, sizeof(float));
+        Hann.imagp = (float *) calloc(2048, sizeof(float));
+        
+        fft_in.realp[0] = 1.0;
+        
 
 #else
         fft_s = kiss_fft_alloc(2048,0,NULL,0);
@@ -211,10 +226,19 @@ public:
         fft_in = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
         fft_out = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
         fft_out2 = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
+        Hann = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
 #endif
         
         ncbuf = 4096;
         cbuf = (float *) calloc(ncbuf + 3, sizeof(float));
+        
+        spec_env = (float *) calloc(2048, sizeof(float));
+        synth_pulse = (float **) calloc(n_synth_pulse, sizeof(float *));
+        
+        for (int k = 0; k < n_synth_pulse; k++)
+            synth_pulse[k] = (float *) calloc(2*maxT, sizeof(float));
+        
+        lms_h = (float *) calloc(lms_n, sizeof(float));
         
         nvoices = 16;
         voices = (voice_t *) calloc(nvoices, sizeof(voice_t));
@@ -236,6 +260,9 @@ public:
             voices[k].ix2 = 0;
             voices[k].xfade_ix = 0;
             voices[k].xfade_dur = 0;
+            voices[k].vibrato_rate = 4.0 + ( (float)rand( ) / (float)RAND_MAX ) * 1.0;
+            voices[k].vibrato_amp = 0.01;
+            voices[k].vib_phase = 0.0;
             
             voices[k].gain = 1.0;
             voices[k].target_gain = 1.0;
@@ -274,6 +301,25 @@ public:
         {
             grain_window [3 + k] = 0.5 * (1 - cosf (2 * M_PI * k / graintablesize));
         }
+        
+        #ifdef __APPLE__
+        int pulsewin = 20;
+        for (int k = 0; k < pulsewin; k++)
+        {
+            fft_in.realp[k] = window_value((float)k/(pulsewin-1));
+//            fprintf(stderr,"%f\n", fft_in.realp[k]);
+        }
+        
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &Hann, 1, &fft_buf, 11, 1);
+        #else
+        #endif
+//        memcpy(cbuf, TestAudioData, 2048*sizeof(float));
+//        T = 200;
+//        get_minphase_pulse(0);
+//        exit(127);
+        
+        fft_mag = new float[nfft];
+        fft_mag_db = new float[nfft];
         
         // define equal tempered interval ratios
         
@@ -357,6 +403,8 @@ public:
         free(fft_out2.imagp);
         free(fft_buf.realp);
         free(fft_buf.imagp);
+        free(A_model.realp);
+        free(A_model.imagp);
 #else
         kiss_fft_free(fft_s);
         free(fft_in);
@@ -366,6 +414,8 @@ public:
 #endif
 
         delete grain_window;
+        delete fft_mag;
+        delete fft_mag_db;
         delete grains;
 
         free(cbuf);
@@ -413,9 +463,45 @@ public:
         - 0.5f * c * (v[0] * b + v[1] + v[2] + v[3] * a);
     }
     
+    float quadratic_peak(float *pv, float *v, int ix)
+    {
+        float pix = 0.5*(v[ix-1] - v[ix+1])/(v[ix+1] + v[ix-1] - 2*v[ix]);
+        *pv = v[ix] - .25*(v[ix-1]-v[ix+1])*pix;
+        return pix;
+    }
+    
     float linear (float *v, float a)
     {
         return v[0] * (1 - a) + v[1] * a;
+    }
+    
+    float linear_interp(float *v, float ix)
+    {
+        int iix = (int) floorf(ix);
+        return linear(v + iix, ix - iix);
+    }
+    
+    float cubic_interp(float *v, float ix)
+    {
+        int iix = (int) floorf(ix);
+        return cubic(v + iix - 1, ix - iix);
+    }
+    
+    inline float window_value(float f)
+    {
+        if (f <= 0 || f >= 1)
+        {
+            return 0.0;
+        }
+        
+        float wi = 3 + graintablesize * f;
+        int i = (int) wi;
+        
+        float w = cubic (grain_window + i, wi - i);
+//        fprintf(stderr, "index: %d: %f\n", i, w);
+//        fprintf(stderr, "done\n");
+        
+        return w;
     }
 	
 	void setParameter(param_address_t address, param_value_t value) {
@@ -765,6 +851,211 @@ public:
 #else
 
 #endif
+    
+    void psola(float *out, float *out2)
+    {
+        int first_psola_voice = 0;
+        
+        voicegain_target = 0;
+        if (!autotune && triad < 0)
+        {
+            first_psola_voice = 1;
+            voicegain_target = dry_mix;
+        }
+        
+        int nonvoiced_count = (int) (voicegain > 0);
+        
+        // Ramp Gain
+        voicegain += .001 * sgn(voicegain_target - voicegain);
+        harmgain += .001 * sgn(harmgain_target - harmgain);
+        
+        for (int vix = first_psola_voice; vix < nvoices; vix++)
+        {
+            voices[vix].target_gain = ((voiced || nonvoiced_count == 0) && voices[vix].midinote > 0) ? 1.0 : 0.0;
+            
+            if (voices[vix].target_gain > 0)
+                nonvoiced_count++;
+            
+            if (vix == 0 && (autotune || triad >= 0)) voices[vix].target_gain = dry_mix;
+            //voices[vix].gain += .001 * sgn(voices[vix].target_gain - voices[vix].gain);
+            voices[vix].gain = inc_to_target(voices[vix].gain, voices[vix].target_gain, 0.9, 0.001, -0.0004);
+            
+            if (voices[vix].gain < 0.001)
+            {
+                continue;
+            }
+            
+            if (vix > n_auto && !midi_enable)
+                continue;
+            
+            float unvoiced_offset = 0;
+            //                if (!voiced && vix > 5)
+            //                {
+            //                    continue;
+            //                    //unvoiced_offset = T * (0.5 - (float) rand() / RAND_MAX);
+            //                }
+            
+            float midigain_local = 1.0;
+            if (vix >= 3)
+                midigain_local = midigain;
+            
+            if (--voices[vix].nextgrain < 0)
+            {
+                // search for the first open grain
+                int found_grain = 0;
+                for (int k = 0; k < ngrains; k++)
+                {
+                    if (grains[k].size < 0)
+                    {
+                        grains[k].size = 2 * T;
+                        grains[k].start = pitchmark[0] - voices[vix].nextgrain - T + unvoiced_offset;
+                        grains[k].ratio = voices[vix].formant_ratio;
+                        grains[k].synth_ix = synth_pulse_ix;
+                        //memcpy(grains[k].data,synth_pulse,roundf(2*T)*sizeof(float));
+                        
+                        grains[k].ix = 0;
+                        grains[k].gain = midigain_local * (float) voices[vix].midivel / 127.0;
+                        grains[k].pan = voices[vix].pan;
+                        grains[k].vix = vix;
+                        
+                        if (vix == 0)
+                        {
+                            grains[k].gain = 1.0;
+                        }
+                        
+                        if (!voiced)
+                        {
+                            grains[k].ratio = 1.0; //voices[vix].ratio;
+                        }
+                        else
+                        {
+                            // for low transpositions, increase gain
+                            if (voices[vix].ratio < 1)
+                                grains[k].gain *= powf(1/voices[vix].ratio,0.5);
+                            
+                            // for high transpositions, start shortening the blips.
+                            //                                if (voices[vix].ratio > 1.7)
+                            //                                {
+                            //                                    //grains[k].size = T/2;
+                            //                                    grains[k].ratio *= (1 + (voices[vix].ratio - 1.7)/2);
+                            //                                    //grains[k].gain *= powf(voices[vix].ratio,0.5);
+                            //                                }
+                        }
+                        
+                        //voices[vix].nextgrain += voiced ? (T / voices[vix].ratio) : T;
+                        
+                        float v_per = (T / voices[vix].ratio);
+                        
+                        while (voices[vix].nextgrain < 0)
+                            voices[vix].nextgrain += v_per;
+                        
+                        voices[vix].vib_phase += 2*M_PI * (v_per / (sampleRate/voices[vix].vibrato_rate));
+                        if (voices[vix].vib_phase > 2*M_PI)
+                            voices[vix].vib_phase -= 2*M_PI;
+                        
+                        float vib_delay = voices[vix].vibrato_amp * v_per * sinf(voices[vix].vib_phase);
+                        voices[vix].nextgrain += vib_delay;
+                        
+                        //printf("phase = %f\n", voices[vix].vib_phase);
+                        if (k > maxgrain)
+                            maxgrain = k;
+                        
+                        found_grain = true;
+                        break;
+                    }
+                }
+                
+                if (found_grain == false)
+                {
+                    fprintf(stderr, "couldn't find grain!\n");
+                }
+                for (int k = maxgrain; k > 0; k--)
+                {
+                    if (grains[k].size >= 0)
+                        break;
+                    
+                    maxgrain = k;
+                }
+            }
+        }
+        
+        for (int ix = 0; ix <= maxgrain; ix++)
+        {
+            grain_t g = grains[ix];
+            
+            // if this grain has been "triggered", it's size is > 0
+            if (g.size > 0)
+            {
+                float fi = g.start + g.ix;
+                
+                if (fi >= ncbuf)
+                    fi -= ncbuf;
+                else if (fi < 0)
+                    fi += ncbuf;
+                
+                int i = (int) fi;
+                //float u = cbuf[i];
+                float u = cubic (cbuf + i, fi - i);
+                
+                float wi = 2 + graintablesize * (g.ix / g.size);
+                i = (int) wi;
+                float w = cubic (grain_window + i, wi - i);
+                
+                //w = 1;
+                
+                // shrink left side of the window to create a sharper attack,
+                // which should translate to a cleaner sound for high transpositions.
+                float mix = 1.0;
+                if (voices[g.vix].ratio > 1.8)
+                {
+                    mix = fmax(0.0, 1.0 - (voices[g.vix].ratio - 1.8));
+                }
+//                if (voices[g.vix].ratio > 2)
+//                {
+//                    mix = 0.0;
+//                }
+                u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
+                //u = synth_pulse[(int) g.ix];
+                
+                
+                float f = g.ix/g.size;
+                
+                if (f < 0.5 && voices[g.vix].ratio > 1)
+                {
+                    f = 0.5 - (0.5 - f)*voices[g.vix].ratio;
+                }
+                
+                w = window_value(f);
+                
+                float hgain = g.vix ? harmgain : 1.0;
+                
+                switch (stereo_mode)
+                {
+                    case StereoModeNormal:
+                        *out += u * hgain * w * g.gain * voices[g.vix].gain * (g.pan + 1.0)/2;
+                        *out2 += u * hgain * w * g.gain * voices[g.vix].gain * (-g.pan + 1)/2;
+                        break;
+                    case StereoModeMono:
+                        *out += u * hgain * w * g.gain * voices[g.vix].gain;
+                        *out2 = *out;
+                        break;
+                    case StereoModeSplit:
+                        *out2 += u * hgain * w * g.gain * voices[g.vix].gain;
+                        break;
+                }
+                
+                g.ix += g.ratio;
+                
+                if (g.ix > g.size)
+                {
+                    g.size = -1;
+                    //printf("ending grain %d\n", ix);
+                }
+                
+                grains[ix] = g;
+            }
+        }
+    }
 
 #ifdef __APPLE__
 	void process(frame_count_t frameCount, frame_count_t bufferOffset) override {
@@ -775,6 +1066,11 @@ public:
 		int channelCount = n_channels;
         sample_count += frameCount;
         n_output_events = 0;
+        
+        // 1st order filters
+        static float inbuf = 0;
+        static float outbuf1 = 0;
+        static float outbuf2 = 0;
         
         if (bufferOffset != 0)
             fprintf(stderr, "buffer_offset = %d\n", bufferOffset);
@@ -792,8 +1088,13 @@ public:
             {
                 out2 = out_buffers[1] + frameOffset;
             }
-
-            cbuf[cix] = *in;
+            
+            // preemphasis
+            cbuf[cix] = (*in - inbuf * 0.9);
+            inbuf = *in;
+            *in = cbuf[cix];
+            
+            // TODO: lms equalizer
             
             if (bypass)
             {
@@ -825,6 +1126,12 @@ public:
                 
                 voiced = (p != 0);
                 
+                if (voiced)
+                {
+                    //get_model(cix - 3*T);
+                    get_minphase_pulse(cix - nfft);
+                }
+                
                 update_voices();
             }
             
@@ -839,174 +1146,21 @@ public:
                 //printf("pitchmark[0,1,2] = %.2f,%.2f,%.2f\ninput = %d\n", pitchmark[0],pitchmark[1],pitchmark[2],cix);
             }
             
-            int first_psola_voice = 0;
-            
-            voicegain_target = 0;
-            if (!autotune && triad < 0)
-            {
-                first_psola_voice = 1;
-                voicegain_target = dry_mix;
-            }
-            
             *out = *in * voicegain / 2;
             if (stereo_mode != StereoModeSplit)
             {
                 *out2 = *out;
             }
             
-            int nonvoiced_count = (int) (voicegain > 0);
+            psola(out, out2);
             
-            // Ramp Gain
-            voicegain += .001 * sgn(voicegain_target - voicegain);
-            harmgain += .001 * sgn(harmgain_target - harmgain);
-    
-            for (int vix = first_psola_voice; vix < nvoices; vix++)
-            {
-                voices[vix].target_gain = ((voiced || nonvoiced_count == 0) && voices[vix].midinote > 0) ? 1.0 : 0.0;
-                
-                if (voices[vix].target_gain > 0)
-                    nonvoiced_count++;
-                
-                if (vix == 0 && (autotune || triad >= 0)) voices[vix].target_gain = dry_mix;
-                //voices[vix].gain += .001 * sgn(voices[vix].target_gain - voices[vix].gain);
-                voices[vix].gain = inc_to_target(voices[vix].gain, voices[vix].target_gain, 0.9, 0.001, -0.0004);
-                
-                if (voices[vix].gain < 0.001)
-                {
-                    continue;
-                }
-                
-                if (vix > n_auto && !midi_enable)
-                    continue;
-                
-                float unvoiced_offset = 0;
-//                if (!voiced && vix > 5)
-//                {
-//                    continue;
-//                    //unvoiced_offset = T * (0.5 - (float) rand() / RAND_MAX);
-//                }
-                
-                float midigain_local = 1.0;
-                if (vix >= 3)
-                    midigain_local = midigain;
-                
-                if (--voices[vix].nextgrain < 0)
-                {
-                    // search for the first open grain
-                    int found_grain = 0;
-                    for (int k = 0; k < ngrains; k++)
-                    {
-                        if (grains[k].size < 0)
-                        {
-                            grains[k].size = 2 * T;
-                            grains[k].start = pitchmark[0] - voices[vix].nextgrain - T + unvoiced_offset;
-                            grains[k].ratio = voices[vix].formant_ratio;
-                            
-                            grains[k].ix = 0;
-                            grains[k].gain = midigain_local * (float) voices[vix].midivel / 127.0;
-                            grains[k].pan = voices[vix].pan;
-                            grains[k].vix = vix;
-                            
-                            if (vix == 0)
-                            {
-                                grains[k].gain = 1.0;
-                            }
-                            
-                            if (!voiced)
-                            {
-                                grains[k].ratio = 1.0; //voices[vix].ratio;
-                            }
-                            else
-                            {
-                                // for low transpositions, increase gain
-                                if (voices[vix].ratio < 1)
-                                    grains[k].gain *= powf(1/voices[vix].ratio,0.5);
-                                
-                                // for high transpositions, start shortening the blips.
-                                if (voices[vix].ratio > 1.7)
-                                {
-                                    //grains[k].size = T/2;
-                                    grains[k].ratio *= (1 + (voices[vix].ratio - 1.7)/2);
-                                    //grains[k].gain *= powf(voices[vix].ratio,0.5);
-                                }
-                            }
-                            
-                            voices[vix].nextgrain += voiced ? (T / voices[vix].ratio) : T;
-                            
-                            //printf("maxgrain = %d\n", maxgrain);
-                            if (k > maxgrain)
-                                maxgrain = k;
-                            
-                            found_grain = true;
-                            break;
-                        }
-                    }
-                    
-                    if (found_grain == false)
-                    {
-                        fprintf(stderr, "couldn't find grain!\n");
-                    }
-                    for (int k = maxgrain; k > 0; k--)
-                    {
-                        if (grains[k].size >= 0)
-                            break;
-                        
-                        maxgrain = k;
-                    }
-                }
-            }
-            
-            for (int ix = 0; ix <= maxgrain; ix++)
-            {
-                grain_t g = grains[ix];
-                
-                // if this grain has been "triggered", it's size is > 0
-                if (g.size > 0)
-                {
-                    float fi = g.start + g.ix;
-                    
-                    if (fi >= ncbuf)
-                        fi -= ncbuf;
-                    else if (fi < 0)
-                        fi += ncbuf;
-                    
-                    int i = (int) fi;
-                    //float u = cbuf[i];
-                    float u = cubic (cbuf + i, fi - i);
-                    
-                    float wi = 2 + graintablesize * (g.ix / g.size);
-                    i = (int) wi;
-                    float w = cubic (grain_window + i, wi - i);
-                    
-                    float hgain = g.vix ? harmgain : 1.0;
-                    
-                    switch (stereo_mode)
-                    {
-                        case StereoModeNormal:
-                            *out += u * hgain * w * g.gain * voices[g.vix].gain * (g.pan + 1.0)/2;
-                            *out2 += u * hgain * w * g.gain * voices[g.vix].gain * (-g.pan + 1)/2;
-                            break;
-                        case StereoModeMono:
-                            *out += u * hgain * w * g.gain * voices[g.vix].gain;
-                            *out2 = *out;
-                            break;
-                        case StereoModeSplit:
-                            *out2 += u * hgain * w * g.gain * voices[g.vix].gain;
-                            break;
-                    }
-                    
-                    g.ix += g.ratio;
-                    
-                    if (g.ix > g.size)
-                    {
-                        g.size = -1;
-                        //printf("ending grain %d\n", ix);
-                    }
-                    
-                    grains[ix] = g;
-                }
-            }
-            
+            float a = .9;
+
+            *out = (*out + outbuf1 * a);
+            *out2 = (*out2 + outbuf2 * a);
+
+            outbuf1 = *out;
+            outbuf2 = *out2;
 		}
 	}
 
@@ -1038,8 +1192,17 @@ public:
             r1 = fft_out.realp[k]; c1 = -fft_out.imagp[k];
             r2 = fft_out2.realp[k]; c2 = fft_out2.imagp[k];
 
-            fft_in.realp[k] = r1*r2 - c1*c2;
-            fft_in.imagp[k] = r1*c2 + r2*c1;
+            float factor = (float) k / (float) nfft;
+            if (k < nfft)
+            {
+                fft_in.realp[k] = (r1*r2 - c1*c2);// * (1 - factor);
+                fft_in.imagp[k] = (r1*c2 + r2*c1);// * (1 - factor);
+            }
+            else
+            {
+                fft_in.realp[k] = 0;
+                fft_in.imagp[k] = 0;
+            }
         }
         // inverse transform
         vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1);
@@ -1071,10 +1234,10 @@ public:
             }
         }
         
-        if (sumsq < 0.01)
-        {
-            period = 0;
-        }
+//        if (sumsq < 0.01)
+//        {
+//            period = 0;
+//        }
         
         Tbuf[Tix++] = period;
         
@@ -1087,6 +1250,155 @@ public:
         vDSP_vsort(Tsrt, (vDSP_Length) nmed, 1);
         
         return Tsrt[nmed/2];
+    }
+        
+    float get_minphase_pulse(int start_ix)
+    {
+        memset(fft_in.realp, 0, nfft * sizeof(float));
+        memset(fft_in.imagp, 0, nfft * sizeof(float));
+        for (int k = 0; k < nfft; k++)
+        {
+            int ix = (start_ix + k) & cmask;
+            fft_in.realp[k] = cbuf[ix] * window_value((float)k/(nfft));
+        }
+        
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+        // log(abs(fft))
+        for (int k = 0; k < nfft; k++)
+        {
+            float r1,c1;
+            r1 = fft_out.realp[k]; c1 = fft_out.imagp[k];
+            
+            fft_in.realp[k] = logf((r1*r1 + c1*c1)+0.00001)/2; // factor of 2 is square root
+            fft_in.imagp[k] = 0;
+        }
+
+        // cepstrum
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1);
+        
+        // fold and window
+        fft_in.realp[0] = fft_out.realp[0]/nfft;
+
+        for (int k = 1; k < nfft; k++)
+        {
+            if (k >= roundf(T*0.4)-1)
+                fft_in.realp[k] = 0.f;
+            else
+            {
+                fft_in.realp[k] = (fft_out.realp[k]*2)/nfft;
+            }
+            
+            fft_in.imagp[k] = 0;
+        }
+        
+        // smooth envelope (fft)
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+        
+        for (int k = 0; k < nfft; k++)
+        {
+            spec_env[k] = 0.9*spec_env[k] + .1*fft_out.realp[k];
+
+            float ex = expf(spec_env[k]);
+            
+            fft_in.realp[k] = ex * Hann.realp[k]/2;
+            fft_in.imagp[k] = ex * Hann.imagp[k]/2;
+        }
+        
+        // get impulse response (ifft)
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1); //inverse
+        int ix = nfft-round(T);
+        
+        if (++synth_pulse_ix >= n_synth_pulse)
+            synth_pulse_ix = 0;
+        
+        for (int k = 0; k < 2*maxT; k++)
+        {
+            if (ix >= nfft)
+                ix = 0;
+            synth_pulse[synth_pulse_ix][k] = fft_out.realp[ix]/nfft;
+            ix++;
+            //fprintf(stderr,"%f\n",synth_pulse[k]);
+        }
+        
+        return 0.0;
+    }
+        
+    float get_model(int start_ix)
+    {
+        memset(fft_in.realp, 0, nfft * sizeof(float));
+        memset(fft_in.imagp, 0, nfft * sizeof(float));
+        memset(A_model.realp, 0, 100 * sizeof(float));
+        memset(A_model.imagp, 0, 100 * sizeof(float));
+        
+        float f0 = (float)nfft/(float)T;
+        fprintf(stderr, "f0 = %f\n", f0);
+        int h_ix = 0;
+        float ratio = 1.;
+        int miss_cnt = 0;
+        float h_max = -500.;
+        
+        for (int k = 0; k < 3*T; k++)
+        {
+            int ix = (start_ix + k) & cmask;
+            fft_in.realp[k] = cbuf[ix] * window_value((float)k/(3*T-1));
+            //fprintf(stderr, "%f\n",fft_in.realp[k]);
+        }
+        
+        vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+        
+        for (int k = 0; k < nfft; k++)
+        {
+            fft_mag[k] = fft_out.realp[k]*fft_out.realp[k] + fft_out.imagp[k]*fft_out.imagp[k];
+            fft_mag_db[k] = 10.*log10(fft_mag[k]);
+        }
+        
+        float fix = 0;
+        
+        while (fix < nfft/8 && h_ix < 30)
+        {
+            fix += f0;
+            h_ix++;
+            //fprintf(stderr, "fix=%f\n",fix);
+            float max = -500;;
+            int max_ix = 0;
+            
+            for (int k = floorf(fix - f0/4); k < ceilf(fix + f0/4); k++)
+            {
+                if (fft_mag_db[k] > max)
+                {
+                    max = fft_mag_db[k]; max_ix = k;
+                }
+            }
+            
+            if (max > fft_mag_db[max_ix+1] && max > fft_mag_db[max_ix-1])
+            {
+                float pv;
+                float pix = max_ix + quadratic_peak(&pv, fft_mag_db, max_ix);
+                
+                if (pv > h_max) h_max = pv;
+                
+                //fprintf(stderr, "px = %f\n",pix);
+                //fprintf(stderr, "pv = %f\n",pv);
+                
+                f0 = f0 * (1-ratio) + ratio * (float)(pix)/h_ix;
+                A_model.realp[h_ix] = linear_interp(fft_out.realp, pix);
+                A_model.imagp[h_ix] = linear_interp(fft_out.imagp, pix);
+                fprintf(stderr, "A[%d] = %f\n", h_ix, sqrtf(A_model.realp[h_ix]*A_model.realp[h_ix] + A_model.imagp[h_ix]*A_model.imagp[h_ix]));
+            }
+            else
+            {
+                if(++miss_cnt > 3)
+                {
+                    break;
+                }
+            }
+            
+            ratio /= 1.2;
+        }
+        
+        fprintf(stderr,"f0_hat = %f\n\n", f0);
+        
+        return 0.0;
     }
 
 #else
@@ -1637,12 +1949,20 @@ private:
     int l2nfft = 11;
 #ifdef __APPLE__
     FFTSetup fft_s;
-    DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf;
+    DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf, A_model, Hann;
 #else
     kiss_fft_cfg fft_s, ifft_s;
-    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf;
+    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf, *A_model, *Hann;
 #endif
     float * cbuf;
+    float * spec_env;
+    float * fft_mag;
+    float * fft_mag_db;
+    float * lms_h;
+    int lms_n = 10;
+    float ** synth_pulse;
+    int n_synth_pulse = 10;
+    int synth_pulse_ix = 0;
     int ncbuf = 4096;
     int cix = 0;
     int rix = 0;
