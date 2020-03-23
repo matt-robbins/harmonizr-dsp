@@ -124,6 +124,17 @@ enum {
     HarmParamMidi,
     HarmParamMidiLink,
     HarmParamMidiLegato,
+    HarmParamMidiKeyCC,
+    HarmParamMidiKeyCcOffset,
+    HarmParamMidiQualCC,
+    HarmParamMidiQualCcOffset,
+    HarmParamMidiNvoiceCC,
+    HarmParamMidiNvoiceCcRange,
+    HarmParamMidiInvCC,
+    HarmParamMidiInvCcRange,
+    HarmParamMidiPC,
+    HarmParamMidiHarmOut,
+    HarmParamMidiMelOut,
     HarmParamTriad,
     HarmParamBypass,
     HarmParamDouble,
@@ -134,6 +145,7 @@ enum {
     HarmParamTuning,
     HarmParamThreshold,
     HarmParamStereo,
+    HarmParamSynth,
     HarmParamInterval
 };
 
@@ -218,6 +230,8 @@ public:
         Hann.imagp = (float *) calloc(2048, sizeof(float));
         
         fft_in.realp[0] = 1.0;
+        
+        fprintf(stderr, "imagp = %p\n", fft_in.imagp);
         
 
 #else
@@ -530,6 +544,39 @@ public:
             case HarmParamMidiLink:
                 midi_link = (int) clamp(value,0.f,1.f);
                 break;
+            case HarmParamMidiKeyCC:
+                midi_keycenter_cc = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiKeyCcOffset:
+                midi_keycenter_cc_offset = (int) clamp(value, 0.f, 127.f);
+                break;
+            case HarmParamMidiQualCC:
+                midi_keyquality_cc = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiQualCcOffset:
+                midi_keyquality_cc_offset = (int) clamp(value, 0.f, 127.f);
+                break;
+            case HarmParamMidiNvoiceCC:
+                midi_nvoices_cc = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiNvoiceCcRange:
+                midi_nvoices_range = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiInvCC:
+                midi_inversion_cc = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiInvCcRange:
+                midi_inversion_range = (int) clamp(value,0.f,127.f);
+                break;
+            case HarmParamMidiPC:
+                midi_program_change_enable = (int) clamp(value,0.f,1.f);
+                break;
+            case HarmParamMidiMelOut:
+                midi_transmit_melody = (int) clamp(value,0.f,1.f);
+                break;
+            case HarmParamMidiHarmOut:
+                midi_transmit_harmony = (int) clamp(value,0.f,1.f);
+                break;
             case HarmParamMidiLegato:
                 midi_legato = (int) clamp(value, 0.f, 1.f);
                 break;
@@ -560,6 +607,10 @@ public:
                 break;
             case HarmParamStereo:
                 stereo_mode = value;
+                break;
+            case HarmParamSynth:
+                synth_enable = value;
+                fprintf(stderr, "synth_enable = %d\n", synth_enable);
                 break;
             case HarmParamInterval:
             default:
@@ -598,6 +649,28 @@ public:
                 return (float) midi_link;
             case HarmParamMidiLegato:
                 return (float) midi_legato;
+            case HarmParamMidiKeyCC:
+                return (float) midi_keycenter_cc;
+            case HarmParamMidiKeyCcOffset:
+                return (float) midi_keycenter_cc_offset;
+            case HarmParamMidiQualCC:
+                return (float) midi_keyquality_cc;
+            case HarmParamMidiQualCcOffset:
+                return (float) midi_keyquality_cc_offset;
+            case HarmParamMidiNvoiceCC:
+                return (float) midi_nvoices_cc;
+            case HarmParamMidiNvoiceCcRange:
+                return (float) midi_nvoices_range;
+            case HarmParamMidiInvCC:
+                return (float) midi_inversion_cc;
+            case HarmParamMidiInvCcRange:
+                return (float) midi_inversion_range;
+            case HarmParamMidiPC:
+                return (float) midi_program_change_enable;
+            case HarmParamMidiMelOut:
+                return (float) midi_transmit_melody;
+            case HarmParamMidiHarmOut:
+                return (float) midi_transmit_harmony;
             case HarmParamTriad:
                 return (float) triad;
             case HarmParamBypass:
@@ -616,6 +689,8 @@ public:
                 return threshold;
             case HarmParamStereo:
                 return stereo_mode;
+            case HarmParamSynth:
+                return synth_enable;
             case HarmParamInterval:
             default:
                 int addr = (int) address - (int) HarmParamInterval;
@@ -795,6 +870,7 @@ public:
     virtual void handleMIDIEvent(midi_event_t const& midiEvent) override {
         uint8_t status = midiEvent.data[0] & 0xF0;
         uint8_t channel = midiEvent.data[0] & 0x0F; // works in omni mode.
+        static int key_quality = 0;
         
         if (channel != 0)
             return;
@@ -819,6 +895,7 @@ public:
             case 0xB0 : { // control
                 uint8_t num = midiEvent.data[1];
                 uint8_t val = midiEvent.data[2];
+                //fprintf(stderr, "cc #%d: %d\n", num, val);
                 if (num == 11)
                 {
                     midigain = (float) val / 64.0;
@@ -836,6 +913,37 @@ public:
                 }
                 if (num == 123) { // all notes off
 
+                }
+                if (num == midi_keycenter_cc) // Keycenter change
+                {
+                    if ((val >= midi_keycenter_cc_offset) && (val < (midi_keycenter_cc_offset + 12)))
+                    {
+                        root_key = val - midi_keycenter_cc_offset + key_quality * 12;
+                        key_quality = 0;
+                        fprintf(stderr,"root key = %d\n", root_key);
+                    }
+                }
+                if (num == midi_keyquality_cc)
+                {
+                    if (val > midi_keyquality_cc_offset)
+                    {
+                        key_quality = val - midi_keyquality_cc_offset;
+                        if (key_quality > 2)
+                            key_quality = 2;
+                    }
+                }
+                if (num == midi_nvoices_cc)
+                {
+                    setParameter(HarmParamNvoices, 1 + (val * 4) / 127);
+                }
+                if (num == midi_inversion_cc)
+                {
+                    setParameter(HarmParamInversion, (val * n_auto) / 127);
+                    //inversion = 1 + (val * (n_auto-1)) / 127;
+                }
+                if (num >= 20 && num <= 31)
+                {
+                    
                 }
                 break;
             }
@@ -885,7 +993,7 @@ public:
                 continue;
             }
             
-            if (vix > n_auto && !midi_enable)
+            if (vix >= n_auto && !midi_enable)
                 continue;
             
             float unvoiced_offset = 0;
@@ -1014,8 +1122,12 @@ public:
 //                {
 //                    mix = 0.0;
 //                }
-                u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
-                //u = synth_pulse[(int) g.ix];
+                
+                if (synth_enable)
+                {
+                    u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
+                    //u = synth_pulse[(int) g.ix];
+                }
                 
                 
                 float f = g.ix/g.size;
@@ -1126,7 +1238,7 @@ public:
                 
                 voiced = (p != 0);
                 
-                if (voiced)
+                if (voiced && synth_enable)
                 {
                     //get_model(cix - 3*T);
                     get_minphase_pulse(cix - nfft);
@@ -1167,6 +1279,11 @@ public:
 #ifdef __APPLE__
     float estimate_pitch(int start_ix)
     {
+        if (fft_in.imagp <= (float *) 0)
+        {
+            return 0.0;
+        }
+        //fprintf(stderr, "estimate pitch : imagp = %p\n", fft_in.imagp);
         memset(fft_in.realp, 0, nfft * sizeof(float));
         memset(fft_in.imagp, 0, nfft * sizeof(float));
         
@@ -2002,7 +2119,20 @@ private:
     voice_t * voices;
     int inversion = 2;
     int midi_enable = 1;
+    int synth_enable = 0;
     
+    int midi_keycenter_cc = 16;
+    int midi_keycenter_cc_offset = 1;
+    int midi_keyquality_cc = 17;
+    int midi_keyquality_cc_offset = 1;
+    int midi_nvoices_cc = 18;
+    int midi_nvoices_range = 0;
+    int midi_inversion_cc = 19;
+    int midi_inversion_range = 0;
+    int midi_program_change_enable = 1;
+    int midi_transmit_harmony = 0;
+    int midi_transmit_melody = 0;
+        
     int midi_legato = 0;
     int midi_pedal = 0;
     int auto_enable = 1;
@@ -2050,8 +2180,8 @@ public:
     int patch_number = 3;
 
     std::string preset_names[9] = {"Chords","Diatonic","Chromatic","Barbershop","JustMidi","Bohemian?","Bass!","4ths","Modes"};
-    //midi_event_t output_events[10];
-    //int n_output_events;
+    midi_event_t output_events[10];
+    int n_output_events;
 };
 
 #endif /* FilterDSPKernel_hpp */

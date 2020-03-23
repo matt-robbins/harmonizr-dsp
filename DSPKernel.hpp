@@ -48,7 +48,11 @@ public:
 	void processWithEvents(AudioTimeStamp const* timestamp, AUAudioFrameCount frameCount, AURenderEvent const* events, AUMIDIOutputEventBlock midiOut);
     
     dispatch_semaphore_t sem;
+    int pc_flag = 0;
+    int cc_flag = 0;
     int program_change = 0;
+    int cc_num = 0;
+    int cc_val = 0;
     
     AUMIDIEvent output_events[10];
     int n_output_events = 0;
