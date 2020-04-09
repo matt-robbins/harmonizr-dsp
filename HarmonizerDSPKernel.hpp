@@ -16,7 +16,7 @@
 
 #ifdef __APPLE__
 #import "../harmonizr-dsp/DSPKernel.hpp"
-#import "ParameterRamper.hpp"
+//#import "ParameterRamper.hpp"
 #include <Accelerate/Accelerate.h>
 #include <dispatch/dispatch.h>
 
@@ -231,7 +231,7 @@ public:
         
         fft_in.realp[0] = 1.0;
         
-        fprintf(stderr, "imagp = %p\n", fft_in.imagp);
+        //fprintf(stderr, "imagp = %p\n", fft_in.imagp);
         
 
 #else
@@ -1309,7 +1309,7 @@ public:
             r1 = fft_out.realp[k]; c1 = -fft_out.imagp[k];
             r2 = fft_out2.realp[k]; c2 = fft_out2.imagp[k];
 
-            float factor = (float) k / (float) nfft;
+            //float factor = (float) k / (float) nfft;
             if (k < nfft)
             {
                 fft_in.realp[k] = (r1*r2 - c1*c2);// * (1 - factor);
@@ -1924,7 +1924,7 @@ public:
         float note_f = f * 12.0;
         int nn = (int) round(note_f);
         
-        int old_midi_note_number = midi_note_number;
+        //int old_midi_note_number = midi_note_number;
         midi_note_number = nn + 69;
         
         //fprintf(stderr, "%f,%d\n",note_f,last_nn);
