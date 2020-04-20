@@ -395,14 +395,14 @@ public:
         memset(midinotes, 0, 128 * sizeof(float));
         memset(keys_down, 0, 128 * sizeof(int));
 
-        int chords_intervals[] = {0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
-                           0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
-                           0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
-        };
-        for (int i = 0; i < 144; i++)
-        {
-            setParameter(HarmParamInterval+i,(float) chords_intervals[i]);
-        }
+//        int chords_intervals[] = {0,4,7,12, -1,3,6,11, 2,5,10,14, 1,4,9,13, 0,3,8,12, -1,2,7,11, 1,6,10,13, 0,5,9,12, -1,4,8,11, 0,3,7,10, 2,6,9,14, 1,5,8,13, // major
+//                           0,3,7,12, -1,2,6,11, 1,5,10,13, 0,4,9,12, -1,3,8,11, -1,2,7,10, 1,6,9,13, 0,5,8,12, 0,4,7,11, 0,3,6,10, 0,5,9,14, 1,4,8,13, // minor
+//                           0,4,10,12, -1,3,9,11, -2,2,8,10, 1,4,7,9, 0,3,6,8, 2,5,7,11, 1,4,6,10, 0,3,5,9, -1,2,4,8, 1,3,7,10, 0,2,6,9, -1,1,5,8, //dom
+//        };
+//        for (int i = 0; i < 144; i++)
+//        {
+//            setParameter(HarmParamInterval+i,(float) chords_intervals[i]);
+//        }
         
 	}
     
@@ -427,6 +427,7 @@ public:
         free(fft_buf);
 #endif
 
+        fprintf(stderr, "*** fini! ***\n");
         delete grain_window;
         delete fft_mag;
         delete fft_mag_db;
@@ -528,7 +529,7 @@ public:
                 break;
             case HarmParamNvoices:
                 n_auto = (int) clamp(value,1.f,4.f);
-                //fprintf(stderr, "nvoices: %d\n", n_auto);
+                fprintf(stderr, "nvoices: %d\n", n_auto);
                 break;
             case HarmParamAuto:
                 autotune = (int) clamp(value,0.f,1.f);
