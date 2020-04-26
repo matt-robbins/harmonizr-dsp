@@ -12,6 +12,8 @@
 
 #import <vector>
 #import <cmath>
+#import <complex>
+#import <random>
 #import <sys/time.h>
 
 #ifdef __APPLE__
@@ -146,7 +148,16 @@ enum {
     HarmParamThreshold,
     HarmParamStereo,
     HarmParamSynth,
+    HarmParamLoop,
     HarmParamInterval
+};
+
+enum loopMode {
+    LoopStopped=0,
+    LoopRec,
+    LoopPlay,
+    LoopPlayRec,
+    LoopPause
 };
 
 enum {
@@ -229,6 +240,8 @@ public:
         Hann.realp = (float *) calloc(2048, sizeof(float));
         Hann.imagp = (float *) calloc(2048, sizeof(float));
         
+        spec_env.realp = (float *) calloc(2048, sizeof(float));
+        spec_env.imagp = (float *) calloc(2048, sizeof(float));
         fft_in.realp[0] = 1.0;
         
         //fprintf(stderr, "imagp = %p\n", fft_in.imagp);
@@ -241,12 +254,12 @@ public:
         fft_out = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
         fft_out2 = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
         Hann = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
+        spec_env = (kiss_fft_cpx *) calloc(2048, sizeof(kiss_fft_cpx));
 #endif
         
         ncbuf = 4096;
         cbuf = (float *) calloc(ncbuf + 3, sizeof(float));
         
-        spec_env = (float *) calloc(2048, sizeof(float));
         synth_pulse = (float **) calloc(n_synth_pulse, sizeof(float *));
         
         for (int k = 0; k < n_synth_pulse; k++)
@@ -260,6 +273,27 @@ public:
         
         in_buffers = (float **) calloc(channelCount, sizeof(float *));
         out_buffers = (float **) calloc(channelCount, sizeof(float *));
+        
+        fd_lpf = (float *) calloc(2048, sizeof(float));
+        
+        int fc = (int) ((2000. / sampleRate) * 2048); // cutoff frequency chosen to preserve formants
+        int bw = fc / 2;
+        //fprintf(stderr, "fc = %d\n", fc);
+        for (int k = 1; k < 1024; k++)
+        {
+            if (k <= fc-bw)
+                fd_lpf[k] = fd_lpf[2048-k] = 1.0;
+            else if (k < fc+bw)
+                fd_lpf[k] = fd_lpf[2048-k] = 0.5 - 0.5 * cos(M_PI * (k - (fc - bw)) / (2*bw + 1));
+            //fprintf(stderr, "%f\n", fd_lpf[k]);
+        }
+        
+        loop_buf = (float **) calloc(2, sizeof(float *));
+        loop_max = (int) (sampleRate * 60);
+        for (int k = 0; k < 2; k++)
+        {
+            loop_buf[k] = (float *) calloc(loop_max, sizeof(float));
+        }
         
         for (int k = 0; k < nvoices; k++)
         {
@@ -435,6 +469,7 @@ public:
 
         free(cbuf);
         free(voices);
+        free(fd_lpf);
         
         free(in_buffers);
         free(out_buffers);
@@ -520,6 +555,7 @@ public:
     }
 	
 	void setParameter(param_address_t address, param_value_t value) {
+        int old_mode = loop_mode;
         switch (address) {
             case HarmParamKeycenter:
                 root_key = (int) clamp(value,0.f,47.f);
@@ -613,6 +649,20 @@ public:
                 synth_enable = value;
                 fprintf(stderr, "synth_enable = %d\n", synth_enable);
                 break;
+            case HarmParamLoop:
+                //int old_mode = loop_mode;
+                loop_mode = (int) clamp(value, 0.f, 4.f);
+                fprintf(stderr, "set loop mode to %d\n", loop_mode);
+                if ((old_mode == LoopRec) && (loop_n == 0))
+                {
+                    loop_n = loop_ix;
+                }
+                if (loop_mode == LoopStopped)
+                {
+                    loop_n = 0;
+                    loop_ix = 0;
+                }
+                break;
             case HarmParamInterval:
             default:
                 int addr = (int) address - (int) HarmParamInterval;
@@ -692,6 +742,8 @@ public:
                 return stereo_mode;
             case HarmParamSynth:
                 return synth_enable;
+            case HarmParamLoop:
+                return (float) loop_mode;
             case HarmParamInterval:
             default:
                 int addr = (int) address - (int) HarmParamInterval;
@@ -708,6 +760,15 @@ public:
                 return round(log2(ratios[addr & 0x3])*12);
         }
 	}
+    
+    float loopPosition()
+    {
+        if (loop_n <= 0)
+        {
+            return (float) loop_ix / (float) loop_max;
+        }
+        return (float) loop_ix / (float) loop_n;
+    }
 
     void setBuffers(float ** in, float ** out) {
 
@@ -989,7 +1050,7 @@ public:
             //voices[vix].gain += .001 * sgn(voices[vix].target_gain - voices[vix].gain);
             voices[vix].gain = inc_to_target(voices[vix].gain, voices[vix].target_gain, 0.9, 0.001, -0.0004);
             
-            if (voices[vix].gain < 0.001)
+            if (voices[vix].gain < 0.0001)
             {
                 continue;
             }
@@ -1053,7 +1114,10 @@ public:
                         
                         //voices[vix].nextgrain += voiced ? (T / voices[vix].ratio) : T;
                         
+                        
                         float v_per = (T / voices[vix].ratio);
+                        if (!voiced)
+                            v_per = T;
                         
                         while (voices[vix].nextgrain < 0)
                             voices[vix].nextgrain += v_per;
@@ -1114,21 +1178,6 @@ public:
                 
                 // shrink left side of the window to create a sharper attack,
                 // which should translate to a cleaner sound for high transpositions.
-                float mix = 1.0;
-                if (voices[g.vix].ratio > 1.8)
-                {
-                    mix = fmax(0.0, 1.0 - (voices[g.vix].ratio - 1.8));
-                }
-//                if (voices[g.vix].ratio > 2)
-//                {
-//                    mix = 0.0;
-//                }
-                
-                if (synth_enable)
-                {
-                    u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
-                    //u = synth_pulse[(int) g.ix];
-                }
                 
                 
                 float f = g.ix/g.size;
@@ -1139,6 +1188,22 @@ public:
                 }
                 
                 w = window_value(f);
+                
+                u = u * w;
+                
+                float mix = 0.0;
+                if (voices[g.vix].ratio > 1.8)
+                {
+                    mix = fmax(0.0, 1.0 - (voices[g.vix].ratio - 1.8));
+                }
+                
+                mix = 0.0;
+                
+                if (synth_enable)
+                {
+                    u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
+                    //u = synth_pulse[(int) g.ix];
+                }
                 
                 float hgain = g.vix ? harmgain : 1.0;
                 
@@ -1187,7 +1252,6 @@ public:
         
         if (bufferOffset != 0)
             fprintf(stderr, "buffer_offset = %d\n", bufferOffset);
-        
         // For each sample.
 		for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
@@ -1239,7 +1303,7 @@ public:
                 
                 voiced = (p != 0);
                 
-                if (voiced && synth_enable)
+                if (synth_enable)
                 {
                     //get_model(cix - 3*T);
                     get_minphase_pulse(cix - nfft);
@@ -1259,7 +1323,7 @@ public:
                 //printf("pitchmark[0,1,2] = %.2f,%.2f,%.2f\ninput = %d\n", pitchmark[0],pitchmark[1],pitchmark[2],cix);
             }
             
-            *out = *in * voicegain / 2;
+            *out = *in * voicegain/2;
             if (stereo_mode != StereoModeSplit)
             {
                 *out2 = *out;
@@ -1267,11 +1331,35 @@ public:
             
             psola(out, out2);
             
+            float l0,l1;
+            l0 = loop_buf[0][loop_ix]; l1 = loop_buf[1][loop_ix];
+            
+            switch (loop_mode)
+            {
+                case LoopRec:
+                    loop_buf[0][loop_ix] = *out; loop_buf[1][loop_ix] = *out2;
+                    loop_ix++;
+                    break;
+                case LoopPlayRec:
+                    loop_buf[0][loop_ix] += *out; loop_buf[1][loop_ix] += *out2;
+                    *out += l0; *out2 += l1;
+                    loop_ix++;
+                    break;
+                case LoopPlay:
+                    *out += l0; *out2 += l1;
+                    loop_ix++;
+                    break;
+            }
+            
+            if ((loop_ix >= loop_max) || ((loop_ix >= loop_n) && (loop_n > 0)))
+                loop_ix = 0;
+            
+            // deemphasis
             float a = .9;
 
             *out = (*out + outbuf1 * a);
             *out2 = (*out2 + outbuf2 * a);
-
+            
             outbuf1 = *out;
             outbuf2 = *out2;
 		}
@@ -1386,8 +1474,9 @@ public:
         {
             float r1,c1;
             r1 = fft_out.realp[k]; c1 = fft_out.imagp[k];
+            float mag = (r1*r1 + c1*c1) * fd_lpf[k];
             
-            fft_in.realp[k] = logf((r1*r1 + c1*c1)+0.00001)/2; // factor of 2 is square root
+            fft_in.realp[k] = logf(mag+0.00001)/2; // factor of 2 is square root
             fft_in.imagp[k] = 0;
         }
 
@@ -1412,30 +1501,37 @@ public:
         // smooth envelope (fft)
         vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
         
+        std::default_random_engine de(sample_count); //seed
+        std::normal_distribution<float> nd(0, 1); //zero mean, 1 std
+        
         for (int k = 0; k < nfft; k++)
         {
-            spec_env[k] = 0.9*spec_env[k] + .1*fft_out.realp[k];
+            spec_env.realp[k] = 0.9*spec_env.realp[k] + 0.1*fft_out.realp[k];
+            spec_env.imagp[k] = 0.9*spec_env.imagp[k] + 0.1*fft_out.realp[k];
 
-            float ex = expf(spec_env[k]);
+            float ex = expf(spec_env.realp[k]);
+            //float rnd = nd(de);
             
-            fft_in.realp[k] = ex * Hann.realp[k]/2;
-            fft_in.imagp[k] = ex * Hann.imagp[k]/2;
+            float fr = fabs(1. - ((float) k / (float) (1 + nfft/2)));
+
+            if (!voiced)
+            {
+                fr = 0.;
+            }
+            
+            fft_in.realp[k] = ex * cos(spec_env.realp[k]);
+            fft_in.imagp[k] = ex * sin(spec_env.realp[k]);
         }
         
         // get impulse response (ifft)
         vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1); //inverse
-        int ix = nfft-round(T);
         
         if (++synth_pulse_ix >= n_synth_pulse)
             synth_pulse_ix = 0;
         
         for (int k = 0; k < 2*maxT; k++)
         {
-            if (ix >= nfft)
-                ix = 0;
-            synth_pulse[synth_pulse_ix][k] = fft_out.realp[ix]/nfft;
-            ix++;
-            //fprintf(stderr,"%f\n",synth_pulse[k]);
+            synth_pulse[synth_pulse_ix][k] = fft_out.realp[k]/20;
         }
         
         return 0.0;
@@ -1924,6 +2020,7 @@ public:
         
         float note_f = f * 12.0;
         int nn = (int) round(note_f);
+        float err = note_f - round(note_f);
         
         //int old_midi_note_number = midi_note_number;
         midi_note_number = nn + 69;
@@ -1957,8 +2054,33 @@ public:
         
         //last_nn = nn;
         
+        // for autotune, find nearest 0-interval for voice 0
+        
+        voice_notes_old[0] = voice_notes[0];
+        int inc = err > 0 ? 1 : -1;
+        int ix = interval;
+        int ix2 = interval;
+        for (int k = 0; k < 12; k++)
+        {
+            if (interval_offsets[((ix+12)%12)*4 + quality*48] == 0)
+            {
+                voice_notes[0] = midi_note_number + ix - interval;
+                voices[0].midinote = voice_notes[0];
+                break;
+            }
+            
+            if (interval_offsets[((ix2+12)%12)*4 + quality*48] == 0)
+            {
+                voice_notes[0] = midi_note_number + ix2 - interval;
+                voices[0].midinote = voice_notes[0];
+                break;
+            }
+            
+            ix += inc; ix2 -= inc;
+        }
+        
         // convert interval table to midi notes for auto voices.
-        for (int k = 0; k < n_auto; k++)
+        for (int k = 1; k < n_auto; k++)
         {
             voice_notes_old[k] = voice_notes[k];
             voice_notes[k] = midi_note_number + interval_offsets[k + (interval*4) + (quality*48)];
@@ -2067,19 +2189,23 @@ private:
     int l2nfft = 11;
 #ifdef __APPLE__
     FFTSetup fft_s;
-    DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf, A_model, Hann;
+    DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf, A_model, Hann, spec_env;
 #else
     kiss_fft_cfg fft_s, ifft_s;
-    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf, *A_model, *Hann;
+    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf, *A_model, *Hann, *spec_env;
 #endif
     float * cbuf;
-    float * spec_env;
+    float * fd_lpf;
     float * fft_mag;
     float * fft_mag_db;
     float * lms_h;
     int lms_n = 10;
     float ** synth_pulse;
-    int n_synth_pulse = 10;
+    float ** loop_buf;
+    int loop_max;
+    int loop_n = 0;
+    int loop_ix = 0;
+    int n_synth_pulse = 20;
     int synth_pulse_ix = 0;
     int ncbuf = 4096;
     int cix = 0;
@@ -2177,6 +2303,7 @@ public:
     int voice_notes[N_AUTO];
     int keys_down[128];
     int root_key = 0;
+    int loop_mode = LoopStopped;
         
     int patch_number = 3;
 
