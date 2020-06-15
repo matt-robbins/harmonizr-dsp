@@ -247,22 +247,18 @@ public:
     
 private:
     int N = 5;
-//    float a[7] = {1.000000000000000e+00,
-//        -5.440472909319650e+00,
-//         1.235306960967521e+01,
-//        -1.498876834536982e+01,
-//         1.025287212293469e+01,
-//        -3.749351316517916e+00,
-//         5.726508450479708e-01};
-    float a[5] = {1.00000,  -3.60721,   4.89021,  -2.95813,   0.67513};
-//    float b[7] = {2.068248980199139e-03,
-//         0.000000000000000e+00,
-//        -6.204746940597418e-03,
-//         0.000000000000000e+00,
-//         6.204746940597418e-03,
-//         0.000000000000000e+00,
-//        -2.068248980199139e-03};
-    float b[5] = {0.016059,   0.000000,  -0.032118,   0.000000,   0.016059};
+
+    float a[5] = {1.000000000000000e+00,
+        -3.847574620836099e+00,
+         5.555010102851863e+00,
+        -3.567181135121114e+00,
+         8.597462655075311e-01};
+
+    float b[5] = {2.651890014535641e-03,
+         0.000000000000000e+00,
+        -5.303780029071281e-03,
+         0.000000000000000e+00,
+         2.651890014535641e-03};
     float x[5];
     float y[5];
     int ix;
@@ -1106,13 +1102,13 @@ public:
     {
         for (int sample_ix = 0; sample_ix < n; sample_ix++)
         {
-            int first_psola_voice = 0;
+            int first_psola_voice = 1;
             
-            voicegain_target = 0;
-            if (!autotune && triad < 0)
+            voicegain_target = dry_mix;
+            if (triad >= 0)
             {
-                first_psola_voice = 1;
-                voicegain_target = dry_mix;
+                first_psola_voice = 0;
+                voicegain_target = 0;
             }
             
             int nonvoiced_count = (int) (voicegain > 0);
@@ -1330,6 +1326,69 @@ public:
         
         return rms/nse_floor;
     }
+    
+    float pitch_resample()
+    {
+        static int was_autotune = autotune;
+
+        float d;
+        
+        if (autotune)
+        {
+            voices[0].ix1 += voices[0].ratio;
+            voices[0].ix2 += voices[0].ratio;
+            d = cix - voices[0].ix1;
+            while (d < 0)
+                d += ncbuf;
+            
+            if (d > (ncbuf/2) + T)
+            {
+                voices[0].ix2 = voices[0].ix1; voices[0].ix1 += T;
+                voices[0].xfade_ix = (int) T/4;
+                voices[0].xfade_dur = (int) T/4;
+                //fprintf(stderr, "xfade forward %d\n", (int) T / 2);
+            }
+            if (d < (ncbuf/2) - T)
+            {
+                voices[0].ix2 = voices[0].ix1; voices[0].ix1 -= T;
+                voices[0].xfade_ix = (int) T/4;
+                voices[0].xfade_dur = (int) T/4;
+                //fprintf(stderr, "xfade back %d\n", (int) T / 2);
+            }
+        }
+        else
+        {
+            voices[0].ix1 += 1;
+            voices[0].ix2 += 1;
+        }
+        
+        if (!autotune && was_autotune)
+        {
+            voices[0].ix2 = voices[0].ix1; voices[0].ix1 = cix-1;
+            voices[0].xfade_ix = voices[0].xfade_dur = (int) T/2;
+            //fprintf(stderr, "xfading!\n");
+        }
+    
+        if (voices[0].ix1 < 2) voices[0].ix1 += ncbuf;
+        if (voices[0].ix1 > ncbuf+1) voices[0].ix1 -= ncbuf;
+        
+        if (voices[0].ix2 < 2) voices[0].ix2 += ncbuf;
+        if (voices[0].ix2 > ncbuf+1) voices[0].ix2 -= ncbuf;
+        
+        float ret = 0.;
+        if (voices[0].xfade_ix > 0)
+        {
+            float mix = window_value(0.5*(float)voices[0].xfade_ix / (float)voices[0].xfade_dur);
+
+            ret = mix * cubic_interp(cbuf, voices[0].ix2) + (1-mix) * cubic_interp(cbuf, voices[0].ix1);
+            voices[0].xfade_ix--;
+        }
+        else
+            ret = cubic_interp(cbuf, voices[0].ix1);
+        
+        was_autotune = autotune;
+        return ret;
+    }
 
 #ifdef __APPLE__
 	void process(frame_count_t frameCount, frame_count_t bufferOffset) override {
@@ -1386,7 +1445,7 @@ public:
                     T = p;
                 else
                     T = oldT + 0.1 * (400 - oldT);
-                
+                                
                 voiced = (p != 0);
                 
                 if (synth_enable)
@@ -1412,8 +1471,8 @@ public:
             
                 //printf("pitchmark[0,1,2] = %.2f,%.2f,%.2f\ninput = %d\n", pitchmark[0],pitchmark[1],pitchmark[2],cix);
             }
-            
-            out[frameIndex] = in[frameIndex] * voicegain/2;
+            float x = pitch_resample(); //autotune ? pitch_resample() : in[frameIndex];
+            out[frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
             if (stereo_mode != StereoModeSplit)
             {
                 out2[frameIndex] = out[frameIndex];
@@ -1949,19 +2008,30 @@ public:
         }
         
         mean = 0;
-        float sum = 0;
+        float sum = 0, csum = 0;
         for (int k = -srch_n; k < srch_n; k++)
         {
             int ix = ((int) pitchmark[0] + k) & mask;
             mean += (float) k * (cbuf[ix] - min);
             sum += (cbuf[ix] - min);
         }
+        mean /= sum;
+        int median = 0;
+        for (int k = -srch_n; k < srch_n; k++)
+        {
+            int ix = ((int) pitchmark[0] + k) & mask;
+            csum += (cbuf[ix] - min);
+            if (csum > sum/2)
+            {
+                median = k; break;
+            }
+        }
         
         if (sum == 0)
             pitchmark[0] += T;
         else
         {
-            pitchmark[0] += (mean/sum);
+            pitchmark[0] += median;
         }
         
         if (pitchmark[0] < 0)
@@ -2243,7 +2313,7 @@ public:
             {
                 voice_notes[k] = -1;
             }
-            
+            voices[0].ratio = 1;
             was_voiced = 0;
             return;
         }
@@ -2253,7 +2323,7 @@ public:
         float note_f = f * 12.0;
         int nn = (int) round(note_f);
         
-        if (nn != last_nn && fabs(note_f - (float) last_nn) < .8)
+        if (nn != last_nn && fabs(note_f - (float) last_nn) < .65)
         {
             nn = last_nn;
         }
@@ -2355,6 +2425,8 @@ public:
             if (triad >= 0 && k < n_auto)
             {
                 voices[k].target_ratio = major_chord_table[0][k];
+                if (autotune)
+                    voices[k].target_ratio *= powf(2.0, -err/12.0);
                 
                 if (k > inversion)
                 {
