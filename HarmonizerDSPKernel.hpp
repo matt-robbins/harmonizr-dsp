@@ -1471,7 +1471,7 @@ public:
             
                 //printf("pitchmark[0,1,2] = %.2f,%.2f,%.2f\ninput = %d\n", pitchmark[0],pitchmark[1],pitchmark[2],cix);
             }
-            float x = pitch_resample(); //autotune ? pitch_resample() : in[frameIndex];
+            float x = autotune ? pitch_resample() : in[frameIndex];
             out[frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
             if (stereo_mode != StereoModeSplit)
             {
