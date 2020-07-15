@@ -245,6 +245,24 @@ public:
         return ret;
     }
     
+    void clear_bad()
+    {
+        for (int k = 0; k < N; k++)
+        {
+            float absx = fabs(x[k]);
+
+            if (absx < 1e-15 || absx > 1e15) {
+                x[k] = 0;
+            }
+            
+            absx = fabs(y[k]);
+            
+            if (absx < 1e-15 || absx > 1e15) {
+                y[k] = 0;
+            }
+        }
+    }
+    
 private:
     int N = 5;
 
@@ -259,8 +277,8 @@ private:
         -5.303780029071281e-03,
          0.000000000000000e+00,
          2.651890014535641e-03};
-    float x[5];
-    float y[5];
+    float x[5] = {0, 0, 0, 0, 0};
+    float y[5] = {0, 0, 0, 0, 0};
     int ix;
 };
 
@@ -1396,7 +1414,8 @@ public:
     void process(frame_count_t frameCount, frame_count_t bufferOffset) {
 #endif
         //fprintf(stderr, "process!\n");
-		int channelCount = n_channels;
+
+        int channelCount = n_channels;
         sample_count += frameCount;
         n_output_events = 0;
         
@@ -1410,7 +1429,7 @@ public:
         }
         
         int n_computed = 0;
-        
+
         // For each sample.
 		for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
@@ -1482,6 +1501,8 @@ public:
         int nn = frameCount - n_computed;
         psola(out+n_computed, out2+n_computed, nn);
         
+        filter.clear_bad();
+                
         // compute looping stuff
         
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
@@ -2244,6 +2265,8 @@ public:
         
     void send_note_on(int nn, int vel)
     {
+        if (n_output_events > max_output_events -1)
+            return;
         // queue MIDI note on messages
         output_events[n_output_events].length = 3;
         output_events[n_output_events].data[0] = 0x90;
@@ -2254,6 +2277,9 @@ public:
         
     void send_note_off(int nn, int vel)
     {
+        if (n_output_events > max_output_events -1)
+            return;
+        
         // queue MIDI note off
         output_events[n_output_events].length = 3;
         output_events[n_output_events].data[0] = 0x80;
@@ -2632,7 +2658,8 @@ public:
     int patch_number = 3;
 
     std::string preset_names[9] = {"Chords","Diatonic","Chromatic","Barbershop","JustMidi","Bohemian?","Bass!","4ths","Modes"};
-    midi_event_t output_events[10];
+    midi_event_t output_events[100];
+    int max_output_events = 100;
     int n_output_events;
 };
 
