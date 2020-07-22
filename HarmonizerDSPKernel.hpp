@@ -148,6 +148,7 @@ enum {
     HarmParamThreshold,
     HarmParamStereo,
     HarmParamSynth,
+    HarmParamVibrato,
     HarmParamLoop,
     HarmParamInterval
 };
@@ -391,6 +392,7 @@ public:
         for (int k = 0; k < nvoices; k++)
         {
             voices[k].midinote = -1;
+            voices[k].lastnote = 0;
             voices[k].midinote_ = 69.0;
             voices[k].error = 0;
             voices[k].ratio = 1;
@@ -742,6 +744,9 @@ public:
                 synth_enable = value;
                 fprintf(stderr, "synth_enable = %d\n", synth_enable);
                 break;
+            case HarmParamVibrato:
+                vibrato = value;
+                break;
             case HarmParamLoop:
                 //int old_mode = loop_mode;
                 loop_mode = (int) clamp(value, 0.f, 4.f);
@@ -836,6 +841,8 @@ public:
                 return stereo_mode;
             case HarmParamSynth:
                 return synth_enable;
+            case HarmParamVibrato:
+                return vibrato;
             case HarmParamLoop:
                 return (float) loop_mode;
             case HarmParamInterval:
@@ -1213,7 +1220,7 @@ public:
                             if (voices[vix].vib_phase > 2*M_PI)
                                 voices[vix].vib_phase -= 2*M_PI;
                             
-                            float vib_delay = voices[vix].vibrato_amp * v_per * sinf(voices[vix].vib_phase);
+                            float vib_delay = vibrato * voices[vix].vibrato_amp * v_per * sinf(voices[vix].vib_phase);
                             voices[vix].nextgrain += vib_delay;
                             
                             //printf("phase = %f\n", voices[vix].vib_phase);
@@ -1840,7 +1847,7 @@ public:
         }
         
         float mix = (float) count / 100.0;
-        fprintf(stderr, "mix = %f\n", mix);
+        //fprintf(stderr, "mix = %f\n", mix);
         
         for (int k = 0; k < 2*maxT; k++)
         {
@@ -2082,14 +2089,15 @@ public:
             // the closest last note to the one we want
             for (int k = n_auto; k < nvoices; k++)
             {
-                dist = abs(voices[k].lastnote - note);
-                if ((dist < min_dist && voices[k].midinote < 0) || voices[k].midinote == note)
+                dist = (voices[k].midinote == note) ? 0 : abs(voices[k].lastnote - note);
+                if ((dist < min_dist && voices[k].midinote < 0))
                 {
                     min_ix = k;
                     min_dist = dist;
                 }
             }
-            
+            fprintf(stderr, "%d,%d,%d\n", min_dist, min_ix,n_auto);
+
             if (min_dist >= 0)
             {
                 voices[min_ix].lastnote = voices[min_ix].midinote;
@@ -2299,17 +2307,24 @@ public:
         voices[0].midivel = 127;
         voices[0].midinote = 0;
         
-        voices[1].midinote = -1;
-        voices[1].midivel = 65;
-        voices[1].pan = 0.5;
-        
-        voices[2].midinote = -1;
-        voices[2].midivel = 65;
-        voices[2].pan = -0.5;
-        
-        voices[3].midinote = -1;
-        voices[3].midivel = 65;
-        voices[3].pan = -0.5;
+        if (n_auto > 1)
+        {
+            voices[1].midinote = -1;
+            voices[1].midivel = 65;
+            voices[1].pan = 0.5;
+        }
+        if (n_auto > 2)
+        {
+            voices[2].midinote = -1;
+            voices[2].midivel = 65;
+            voices[2].pan = -0.5;
+        }
+        if (n_auto > 3)
+        {
+            voices[3].midinote = -1;
+            voices[3].midivel = 65;
+            voices[3].pan = -0.5;
+        }
         
         if (midi_changed && (sample_count - midi_changed_sample_num) > (int) sampleRate / 50)
         {
@@ -2341,6 +2356,7 @@ public:
             }
             voices[0].ratio = 1;
             was_voiced = 0;
+            
             return;
         }
         
@@ -2432,6 +2448,7 @@ public:
             }
             
             voices[k].midinote = voice_notes[k];
+            voices[k].midivel = 65;
         }
         
         if (!auto_enable)
@@ -2445,6 +2462,7 @@ public:
         // compute target resampling ratios for all voices.
         for (int k = 0; k < nvoices; k++)
         {
+            //fprintf(stderr, "%d\t", voices[k].midinote);
             if (voices[k].midinote < 0)
                 continue;
             
@@ -2495,6 +2513,8 @@ public:
             
             voices[k].target_ratio = powf(2.0, error_hsteps/12);
         }
+        
+        //fprintf(stderr, "\n");
         
         was_voiced = voiced;
     
@@ -2586,6 +2606,7 @@ private:
     float speed = 1.0;
     float corr_strength = 0.5;
     float threshold = 0.2;
+    float vibrato = 0.;
     int autotune = 1;
     int bypass = 0;
     
