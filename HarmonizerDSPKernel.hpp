@@ -660,6 +660,10 @@ public:
                 break;
             case HarmParamNvoices:
                 n_auto = (int) clamp(value,1.f,4.f);
+                for (int k = n_auto; k < N_AUTO; k++)
+                {
+                    voice_notes[k] = -1;
+                }
                 fprintf(stderr, "nvoices: %d\n", n_auto);
                 break;
             case HarmParamAuto:
@@ -1443,6 +1447,8 @@ public:
             cbuf[cix] = in[frameIndex];
             fbuf[cix] = filter.compute_one(cbuf[cix]);
             
+            measure_snr(cbuf[cix]);
+            
             if (bypass)
             {
                 out[frameIndex] = in[frameIndex] / 2;
@@ -2096,7 +2102,7 @@ public:
                     min_dist = dist;
                 }
             }
-            fprintf(stderr, "%d,%d,%d\n", min_dist, min_ix,n_auto);
+            //fprintf(stderr, "%d,%d,%d\n", min_dist, min_ix,n_auto);
 
             if (min_dist >= 0)
             {
@@ -2466,6 +2472,12 @@ public:
             if (voices[k].midinote < 0)
                 continue;
             
+            // clear out lingering notes
+            if (k >= n_auto && voices[k].midinote >= 0 && !keys_down[voices[k].midinote] && !midi_pedal)
+            {
+                voices[k].midinote = -1;
+            }
+            
             if (triad >= 0 && k < n_auto)
             {
                 voices[k].target_ratio = major_chord_table[0][k];
@@ -2577,7 +2589,7 @@ private:
     int cix = 0;
     int rix = 0;
     int maxgrain = 0;
-    float rms = 0;
+    
     float mean_sq = 0;
     float nse_floor = 1.0;
     float rcnt = 256;
@@ -2675,6 +2687,8 @@ public:
     int keys_down[128];
     int root_key = 0;
     int loop_mode = LoopStopped;
+        
+    float rms = 0;
         
     int patch_number = 3;
 
