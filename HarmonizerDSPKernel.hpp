@@ -45,7 +45,10 @@ T clamp(T input, T low, T high) {
     return std::min(std::max(input, low), high);
 }
 
-#endif
+#endif //#ifdef APPLE
+
+#include "ButterworthFilter.h"
+
 
 template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
@@ -198,91 +201,56 @@ static inline float inc_to_target(float value, float target, float c, float maxr
     return value + diff;
 }
 
+
 /*
-    ButterworthFilter
-    keeps track of state and computes via direct form I
+  PsolaVoice
+  one voice of PSOLA synthesis
  */
 
-class ButterworthFilter {
+class PsolaVoice {
 public:
-    ButterworthFilter() {
-//        N = sizeof(b) / sizeof(float);
-//        x = (float *) calloc(N, sizeof(float));
-//        y = (float *) calloc(N, sizeof(float));
-    }
-    void compute(float * out, float * in, int n)
-    {
-        for (int k = 0; k < n; k++)
-        {
-            out[k] = compute_one(in[k]);
-        }
-    }
+    float error;
+    float ratio;
+    float target_ratio;
+    float formant_ratio;
+    float nextgrain;
+    float pan;
+    float ix1;
+    float ix2;
+    float gain;
+    float target_gain;
+    float vibrato_rate;
+    float vibrato_amp;
+    float vib_phase;
+    int xfade_ix;
+    int xfade_dur;
+    int midinote;
+    float midinote_;
+    int midivel;
+    int lastnote;
+    unsigned int sample_num;
     
-    inline float compute_one(float in)
-    {
-        float ret = 0;
-        x[ix] = in;
-        y[ix] = 0;
-        for (int j = 0; j < N; j++)
-        {
-            int xix = (ix-j+N)%N;
-            y[ix] += x[xix]*b[j];
-        }
-        
-        for (int j = 1; j < N; j++)
-        {
-            int yix = (ix-j+N)%N;
-            y[ix] -= y[yix]*a[j];
-        }
-        
-        ret = y[ix];
-        //fprintf(stderr,"%f: %f\n", in, ret);
-        
-        ix++;
-        if (ix >= N)
-        {
-            ix = 0;
-        }
-        return ret;
+    PsolaVoice() {
+        midinote = -1;
+        lastnote = 0;
+        midinote_ = 69.0;
+        error = 0;
+        ratio = 1;
+        target_ratio = 1.0;
+        formant_ratio = 1;
+        nextgrain = 250;
+        ix1 = 0;
+        ix2 = 0;
+        xfade_ix = 0;
+        xfade_dur = 0;
+        vibrato_rate = 4.0 + ( (float)rand( ) / (float)RAND_MAX ) * 1.0;
+        vibrato_amp = 0.01;
+        vib_phase = 0.0;
+        gain = 1.0;
+        target_gain = 1.0;
     }
-    
-    void clear_bad()
-    {
-        for (int k = 0; k < N; k++)
-        {
-            float absx = fabs(x[k]);
 
-            if (absx < 1e-15 || absx > 1e15) {
-                x[k] = 0;
-            }
-            
-            absx = fabs(y[k]);
-            
-            if (absx < 1e-15 || absx > 1e15) {
-                y[k] = 0;
-            }
-        }
-    }
-    
-private:
-    int N = 5;
-
-    float a[5] = {1.000000000000000e+00,
-        -3.847574620836099e+00,
-         5.555010102851863e+00,
-        -3.567181135121114e+00,
-         8.597462655075311e-01};
-
-    float b[5] = {2.651890014535641e-03,
-         0.000000000000000e+00,
-        -5.303780029071281e-03,
-         0.000000000000000e+00,
-         2.651890014535641e-03};
-    float x[5] = {0, 0, 0, 0, 0};
-    float y[5] = {0, 0, 0, 0, 0};
-    int ix;
 };
-
 
 /*
 	HarmonizerDSPKernel
@@ -1021,6 +989,8 @@ public:
 #ifdef __APPLE__
 
 	void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
+        // just set it now
+        setParameter(address, value);
         return;
 	}
 
@@ -1157,8 +1127,7 @@ public:
                 //voices[vix].gain += .001 * sgn(voices[vix].target_gain - voices[vix].gain);
                 voices[vix].gain = inc_to_target(voices[vix].gain, voices[vix].target_gain, 0.9, 0.001, -0.0004);
                 
-                if (voices[vix].gain < 0.0001)
-                {
+                if (voices[vix].gain < 0.0001){
                     continue;
                 }
                 
@@ -1195,13 +1164,11 @@ public:
                             grains[k].pan = voices[vix].pan;
                             grains[k].vix = vix;
                             
-                            if (vix == 0)
-                            {
+                            if (vix == 0){
                                 grains[k].gain = 1.0;
                             }
                             
-                            if (!voiced)
-                            {
+                            if (!voiced){
                                 grains[k].ratio = 1.0; //voices[vix].ratio;
                             }
                             else
@@ -1289,8 +1256,7 @@ public:
                     u = u * w;
                     
                     float mix = 0.0;
-                    if (voices[g.vix].ratio > 1.8)
-                    {
+                    if (voices[g.vix].ratio > 1.8){
                         mix = fmax(0.0, 1.0 - (voices[g.vix].ratio - 1.8));
                     }
                     
@@ -1685,7 +1651,6 @@ public:
         }
 
         float period = 0.0;
-        static float old_period = 0;
         
         //fprintf(stderr, "estimate pitch : imagp = %p\n", fft_in.imagp);
         memset(fft_in.realp, 0, nfft * sizeof(float));
