@@ -13,6 +13,35 @@ CircularAudioBuffer::~CircularAudioBuffer() {
     delete(data);
 }
 
+int CircularAudioBuffer::getWriteIndex() {
+    return ix;
+}
+
+int CircularAudioBuffer::getSize() {
+    return N;
+}
+
+float CircularAudioBuffer::relIndexBehind(float c) {
+    float d = ix - c;
+    while (d < 0)
+        d += N;
+
+    return d;
+}
+float CircularAudioBuffer::relIndexAhead(float c) {
+    float d = c - ix;
+    while (d < 0)
+        d += N;
+
+    return d;
+}
+
+float CircularAudioBuffer::wrapIndex(float cx) {
+    if (cx < 0) cx += N;
+    if (cx >= N) cx -= N;
+    return cx;
+}
+
 const std::string CircularAudioBuffer::toString() {
     std::string out = "";
 

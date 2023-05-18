@@ -21,9 +21,7 @@ float Window::value(float f) {
     }
     
     float wi = 3 + (N-1) * f;
-
     int i = (int) wi;
-    
     float w = cubic (table + i - 1, wi - i);    
     return w;
 }

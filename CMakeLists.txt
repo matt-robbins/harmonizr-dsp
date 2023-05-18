@@ -1,3 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(HarmonizrDsp)
+
 include(FetchContent)
 FetchContent_Declare(
   googletest
@@ -12,12 +16,15 @@ FetchContent_MakeAvailable(googletest)
 
 set(CMAKE_CXX_STANDARD 14)
 include_directories(/usr/local/include)
-set(SOURCES Window.cpp Looper.cpp CircularAudioBuffer.cpp GranularSynth.cpp)
+set(SOURCES Window.cpp Looper.cpp CircularAudioBuffer.cpp GranularSynth.cpp SimplePitchShifter.cpp)
 add_library(harm ${SOURCES})
 add_executable(test_window test/test_window.cpp)
 add_executable(test_cbuf test/test_cbuf.cpp)
 add_executable(test_gsynth test/test_gsynth.cpp)
+add_executable(test_pshift test/test_pshifter.cpp)
 target_link_libraries(test_window gtest gtest_main harm)
 target_link_libraries(test_cbuf gtest gtest_main harm)
 target_link_libraries(test_gsynth gtest gtest_main harm)
+target_link_libraries(test_pshift gtest gtest_main harm)
+
 add_test(NAME window COMMAND test_window)
