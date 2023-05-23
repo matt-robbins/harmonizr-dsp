@@ -5,12 +5,13 @@
 #include <iostream>
 
 CircularAudioBuffer::CircularAudioBuffer(int length) : N{length} {
-    data = new float[N+3]{};
+    _data = new float[2*N]{}; //alias data back one full length
+    data = _data + N;
     ix = 0;
 }
 
 CircularAudioBuffer::~CircularAudioBuffer() {
-    delete(data);
+    delete(_data);
 }
 
 int CircularAudioBuffer::getWriteIndex() {
@@ -28,13 +29,13 @@ float CircularAudioBuffer::relIndexBehind(float c) {
 
     return d;
 }
-float CircularAudioBuffer::relIndexAhead(float c) {
-    float d = c - ix;
-    while (d < 0)
-        d += N;
+// float CircularAudioBuffer::relIndexAhead(float c) {
+//     float d = c - ix;
+//     while (d < 0)
+//         d += N;
 
-    return d;
-}
+//     return d;
+// }
 
 float CircularAudioBuffer::wrapIndex(float cx) {
     if (cx < 0) cx += N;
@@ -73,20 +74,15 @@ float CircularAudioBuffer::operator[](int ix){
 
 void CircularAudioBuffer::copyRange(int relix, int n, float * out) {
 
-    if (n > N) {
+    if (relix < 1 || relix > N) {
+        throw std::invalid_argument("relative index must be less than N samples behind");
+    }
+
+    if (n > relix) {
         throw std::invalid_argument("input size n must be smaller than buffer size N");
     }
 
-    int startix = relix+ix;
-    while (startix < 0) startix += N;
-    while (startix >= N) startix -= N;
-    int nback = std::min(n,N - startix - 1);
-    
-    std::memcpy(out, data + startix, nback * sizeof(float));
-    int rem = n - nback;
-    if (rem > 0) {
-        std::memcpy(out + nback, data, rem * sizeof(float));
-    }
+    std::memcpy(out, data + ix-relix, n * sizeof(float));
 }
 
 int CircularAudioBuffer::insertValue(float val){
@@ -99,9 +95,6 @@ int CircularAudioBuffer::insertValue(float val){
 }
 
 void CircularAudioBuffer::insertValueAtIndex(const int idx, float val) {
-    data[idx] = val;
-    if (idx < 3){
-        data[N+idx] = val;
-    }
+    data[idx] = _data[idx] = val;
     return;
 }

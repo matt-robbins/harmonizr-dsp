@@ -24,10 +24,10 @@ public:
     int getSize();
 
     float relIndexBehind(float ix);
-    float relIndexAhead(float ix);
     
 private:
     float *data;
+    float *_data;
     int N;
     int ix;
 };

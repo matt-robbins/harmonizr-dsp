@@ -60,7 +60,7 @@ float GranularSynth::synthesizeOne() {
             grains[ix].ix += grains[ix].ratio;
             
             if (grains[ix].ix > grains[ix].size){
-                grains[ix].size = -1;
+                grains[ix].size = -1; // declare this grain open
             }
         }
     }
