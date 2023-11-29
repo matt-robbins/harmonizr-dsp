@@ -9,7 +9,6 @@
 #ifndef HarmonizerDSPKernel_hpp
 #define HarmonizerDSPKernel_hpp
 
-
 #import <vector>
 #import <cmath>
 #import <complex>

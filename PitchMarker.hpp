@@ -4,9 +4,10 @@
 
 class PitchMarker {
     public:
-        PitchMarker(CircularAudioBuffer &b, float maxT);
+        PitchMarker(CircularAudioBuffer &b, float maxT=800);
         ~PitchMarker();
         float findMark(float T, float res);
+        int findMarkD(float T, float frac);
         float getMark();
     private:
         CircularAudioBuffer &b;

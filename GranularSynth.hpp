@@ -2,12 +2,12 @@
 #define _gransynth_
 #include "CircularAudioBuffer.hpp"
 #include "Window.hpp"
+#include <vector>
 
 typedef struct Grain
 {
     float size, start, ix, ratio, gain, pan;
-
-    CircularAudioBuffer *b = nullptr;
+    CircularAudioBuffer *b;
     Grain(){
         size = -1.0;
         start = -1.0;
@@ -30,7 +30,7 @@ public:
 private:
 
     int N;
-    Grain *grains;
+    std::vector<Grain> grains;
     int maxgrain = 0;
 
     Window win = Window(Window::Hann, 64);

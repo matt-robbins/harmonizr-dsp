@@ -2,13 +2,11 @@
 #include <iostream>
 
 GranularSynth::GranularSynth(int table_size) : N{table_size} {
-    grains = new Grain[N]{};
-
    // std::cout << "grain 1 size = " << grains[1].size;
+   grains.resize(table_size);
 }
 
 GranularSynth::~GranularSynth() {
-    delete(grains);
 }
 
 void GranularSynth::newGrain(
