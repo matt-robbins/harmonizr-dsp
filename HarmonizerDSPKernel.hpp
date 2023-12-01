@@ -16,12 +16,12 @@
 #import <sys/time.h>
 
 #ifdef __APPLE__
-#import "../harmonizr-dsp/DSPKernel.hpp"
-//#import "ParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 #include <Accelerate/Accelerate.h>
 #include <dispatch/dispatch.h>
 
-#include "TestAudioData.h"
+//#include "TestAudioData.h"
 
 typedef AUAudioFrameCount frame_count_t;
 typedef AUParameterAddress param_address_t;
@@ -833,14 +833,7 @@ public:
         }
 	}
     
-    float loopPosition()
-    {
-        if (loop_n <= 0)
-        {
-            return (float) loop_ix / (float) loop_max;
-        }
-        return (float) loop_ix / (float) loop_n;
-    }
+    float loopPosition();
 
     void setBuffers(float ** in, float ** out) {
 
