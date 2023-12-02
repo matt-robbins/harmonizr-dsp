@@ -85,7 +85,7 @@ void CircularAudioBuffer::copyRange(int relix, int n, float * out) {
     std::memcpy(out, data + ix-relix, n * sizeof(float));
 }
 
-int CircularAudioBuffer::insertValue(float val){
+int CircularAudioBuffer::pushValue(float val){
     int r = ix;
     this->insertValueAtIndex(ix,val);
     if (++ix >= N)

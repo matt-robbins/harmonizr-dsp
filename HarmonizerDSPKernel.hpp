@@ -14,6 +14,9 @@
 #import <complex>
 #import <random>
 #import <sys/time.h>
+#include "ButterworthFilter.hpp"
+#include "CircularAudioBuffer.hpp"
+#include "PitchEstimator.hpp"
 
 #ifdef __APPLE__
 #import "DSPKernel.hpp"
@@ -46,8 +49,6 @@ T clamp(T input, T low, T high) {
 
 #endif //#ifdef APPLE
 
-#include "ButterworthFilter.h"
-
 // Utility functions
 float linear (float *v, float a);
 float linear_interp(float *v, float ix);
@@ -59,10 +60,8 @@ template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
-
 #define N_AUTO 4
 #define N_MIDI_BUF 100
-
 
 typedef struct grain_s
 {
@@ -205,8 +204,8 @@ private:
     inline float measure_snr(float in);
     float pitch_resample();
     
-    float estimate_pitch(int start_ix);
-    float estimate_pitch2(int start_ix);
+   // float estimate_pitch(int start_ix);
+   // float estimate_pitch2(int start_ix);
     float get_minphase_pulse(int start_ix);
     float get_model(int start_ix);
     
@@ -218,7 +217,14 @@ private:
 public:
     int n_channels = 0;
 
-    HarmonizerDSPKernel() {}
+    HarmonizerDSPKernel() : 
+        raw_buffer { CircularAudioBuffer(nfft*2)},
+        filtered_buffer { CircularAudioBuffer(nfft*2)},
+        pitchEstimator { PitchEstimatorYIN(maxT,l2nfft,threshold,nmed) }
+    {
+        
+        fprintf(stderr, "bufsize = %d\n", raw_buffer.getSize());
+    }
 	
     void init(int inChannels, int outChannels, double inSampleRate);
     void fini();
@@ -252,11 +258,14 @@ public:
         
     
     // MARK: Member Variables
-
 private:
 	//std::vector<FilterState> channelStates;
-    int nfft = 2048;
     int l2nfft = 11;
+    int nfft = 1 << l2nfft;
+    int maxT = 600; // note nfft should be bigger than 3*maxT
+    float threshold = 0.2; // for YIN pitch estimator
+    int nmed = 7; // length of median filter for YIN estimator
+    
 #ifdef __APPLE__
     FFTSetup fft_s;
     DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf, A_model, Hann, spec_env;
@@ -266,6 +275,10 @@ private:
 #endif
         
     ButterworthFilter filter;
+    CircularAudioBuffer raw_buffer;
+    CircularAudioBuffer filtered_buffer;
+    PitchEstimatorYIN pitchEstimator;
+    
     float * in_filt;
     float * cbuf;
     float * fbuf;
@@ -296,14 +309,13 @@ private:
     float nse_floor = 1.0;
     float rcnt = 256;
     float T = 400;
-    int nmed = 7;
     float Tbuf[7];
     float Tsrt[7];
     int nAmpl = 50;
     float Abuf[50];
     int Tix;
     float pitchmark[3] = {0,-1,-1};
-    int maxT = 600; // note nfft should be bigger than 3*maxT
+    
     int cmask = ncbuf - 1;
     int voiced = 0;
     float noise_pct = 0.0;
@@ -319,7 +331,6 @@ private:
     float dry_mix = 1.0;
     float speed = 1.0;
     float corr_strength = 0.5;
-    float threshold = 0.2;
     float vibrato = 0.;
     int autotune = 1;
     int bypass = 0;

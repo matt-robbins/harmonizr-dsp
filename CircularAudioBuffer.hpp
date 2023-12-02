@@ -10,7 +10,7 @@ public:
     ~CircularAudioBuffer();
 
     void insertValueAtIndex(int ix, float val);
-    int insertValue(float val);
+    int pushValue(float val);
     float valueAtIndexInterp(float ix);
 
     float wrapIndex(float ix);

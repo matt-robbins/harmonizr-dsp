@@ -254,7 +254,6 @@ void HarmonizerDSPKernel::reset() {
     
     pitchmark[0] = 0;
     pitchmark[1] = -1;
-    pitchmark[2] = -1;
 }
 
 void HarmonizerDSPKernel::setBuffers(float ** in, float ** out) {
@@ -745,7 +744,9 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
     {
         cbuf[cix] = in[frameIndex];
+        raw_buffer.pushValue(in[frameIndex]);
         fbuf[cix] = filter.compute_one(cbuf[cix]);
+        filtered_buffer.pushValue(filter.compute_one(in[frameIndex]));
         
         measure_snr(cbuf[cix]);
         
@@ -772,7 +773,8 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
         {
             rcnt = 256;
             int oldT = T;
-            float p = estimate_pitch(cix - 2*maxT);
+            //float p = estimate_pitch(cix - 2*maxT);
+            float p = pitchEstimator.estimate(filtered_buffer);
             if (p > 0)
                 T = p;
             else
@@ -800,8 +802,6 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
             int nn = frameIndex - n_computed;
             psola(out+n_computed, out2+n_computed, nn);
             n_computed += nn;
-        
-            //printf("pitchmark[0,1,2] = %.2f,%.2f,%.2f\ninput = %d\n", pitchmark[0],pitchmark[1],pitchmark[2],cix);
         }
         float x = autotune ? pitch_resample() : in[frameIndex];
         out[frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
@@ -1213,177 +1213,6 @@ float HarmonizerDSPKernel::pitch_resample()
 }
 
 #ifdef __APPLE__
-float HarmonizerDSPKernel::estimate_pitch(int start_ix)
-{
-    if (fft_in.imagp <= (float *) 0)
-    {
-        return 0.0;
-    }
-
-    static float old_period = 0;
-    static int dead_count = 0;
-    static int live_count = 0;
-    
-    //fprintf(stderr, "estimate pitch : imagp = %p\n", fft_in.imagp);
-    memset(fft_in.realp, 0, nfft * sizeof(float));
-    memset(fft_in.imagp, 0, nfft * sizeof(float));
-    
-    for (int k = 0; k < maxT; k++)
-    {
-        int ix = (start_ix + k) & cmask;
-        fft_in.realp[k] = fbuf[ix];
-    }
-    
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
-    
-    for (int k = maxT; k < 2*maxT; k++)
-    {
-        int ix = (start_ix + k) & cmask;
-        fft_in.realp[k] = fbuf[ix];
-    }
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, 11, 1);
-    
-    // conjugate small window and correlate with large window
-    for (int k = 0; k < nfft; k++)
-    {
-        float r1,c1,r2,c2;
-        r1 = fft_out.realp[k]; c1 = -fft_out.imagp[k];
-        r2 = fft_out2.realp[k]; c2 = fft_out2.imagp[k];
-
-        //float factor = (fd_lpf[k]*0.9 + 0.1);
-        if (k < nfft)
-        {
-            fft_in.realp[k] = (r1*r2 - c1*c2);// * (1 - factor);
-            fft_in.imagp[k] = (r1*c2 + r2*c1);// * (1 - factor);
-        }
-        else
-        {
-            fft_in.realp[k] = 0;
-            fft_in.imagp[k] = 0;
-        }
-    }
-    // inverse transform
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1);
-    
-    float sumsq_ = fft_out.realp[0]/nfft;
-    float sumsq = sumsq_;
-    
-    float df,cmdf1,cmdf2, sum = 0;
-    
-    float period = 0.0;
-    
-    // compute cumulative mean difference function
-    cmdf2 = cmdf1 = 1;
-    cmdf[0] = 1;
-    for (int k = 1; k < maxT; k++)
-    {
-        int ix1 = (start_ix + k) & cmask;
-        int ix2 = (start_ix + k + maxT) & cmask;
-        
-        sumsq -= fbuf[ix1]*fbuf[ix1];
-        sumsq += fbuf[ix2]*fbuf[ix2];
-        
-        df = sumsq + sumsq_ - 2 * fft_out.realp[k]/nfft;
-        sum += df;
-        cmdf2 = cmdf1; cmdf1 = cmdf[k-1];
-        cmdf[k] = (df * k) / sum;
-        if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf[k] && cmdf1 < threshold && k > 20)
-        {
-            dead_count = 0;
-            period = (float) (k-1) + 0.5*(cmdf2 - cmdf[k])/(cmdf2 + cmdf[k] - 2*cmdf1);
-            noise_pct = 2 * cmdf1;
-            if (noise_pct > 1)
-                noise_pct = 1;
-            break;
-        }
-    }
-    
-    if (period == 0 && dead_count < 10)
-    {
-        live_count = 0;
-        dead_count++;
-        period = old_period;
-    }
-    else
-    {
-
-        live_count++;
-    }
-    
-    old_period = period;
-    Tbuf[Tix++] = period;
-    
-    //fprintf(stderr, "%f\n", sumsq);
-    
-    if (Tix >= nmed)
-        Tix = 0;
-    
-    memcpy(Tsrt, Tbuf, nmed * sizeof(float));
-    vDSP_vsort(Tsrt, (vDSP_Length) nmed, 1);
-    
-    return Tsrt[nmed/2];
-}
-    
-float HarmonizerDSPKernel::estimate_pitch2(int start_ix)
-{
-    if (fft_in.imagp <= (float *) 0)
-    {
-        return 0.0;
-    }
-
-    float period = 0.0;
-    
-    //fprintf(stderr, "estimate pitch : imagp = %p\n", fft_in.imagp);
-    memset(fft_in.realp, 0, nfft * sizeof(float));
-    memset(fft_in.imagp, 0, nfft * sizeof(float));
-    float rms = 0;
-    for (int k = 0; k < nfft; k++)
-    {
-        int ix = (start_ix + k) & cmask;
-        fft_in.realp[k] = cbuf[ix] * window_value((float)k/(nfft));
-        rms += cbuf[ix]*cbuf[ix];
-    }
-    
-    rms /= nfft;
-    
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
-    // log(abs(fft))
-    for (int k = 0; k < nfft; k++)
-    {
-        float r1,c1;
-        r1 = fft_out.realp[k]; c1 = fft_out.imagp[k];
-        float mag = (r1*r1 + c1*c1);
-        
-        fft_in.realp[k] = logf(mag+0.00001)/2; // factor of 2 is square root
-        fft_in.imagp[k] = 0;
-    }
-
-    // cepstrum
-    //vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1);
-    
-    int max_ix = 0;
-    for (int k = 1; k < nfft/8; k++)
-    {
-        if (fft_in.realp[k] > fft_in.realp[k-1] && fft_in.realp[k] > fft_in.realp[k+1] && fft_in.realp[k] > fft_in.realp[1] + 2)
-        {
-            max_ix = k; break;
-        }
-    }
-    
-    if (max_ix == 0)
-        return 0.0;
-    
-//        period = (float) (max_ix-1) + 0.5*(cmdf2 - cmdf[k])/(cmdf2 + cmdf[k] - 2*cmdf1);
-    
-    float l,p,r;
-    l = fft_in.realp[max_ix-1];
-    r = fft_in.realp[max_ix+1];
-    p = fft_in.realp[max_ix];
-    
-    period = (float) (max_ix-1) + 0.5*(l - r)/(l + r - 2*p);
-    fprintf(stderr,"%f\n", (float)nfft/period);
-    return nfft/period;
-}
     
 float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
 {
@@ -1589,75 +1418,6 @@ float HarmonizerDSPKernel::get_model(int start_ix)
 }
 
 #else
-float HarmonizerDSPKernel::estimate_pitch(int start_ix) {
-    memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
-
-    for (int k = 0; k < maxT; k++) {
-        int ix = (start_ix + k) & cmask;
-        fft_in[k].r = cbuf[ix];
-    }
-
-    kiss_fft(fft_s, fft_in, fft_out);
-
-    //memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
-
-    for (int k = maxT; k < 2 * maxT; k++) {
-        int ix = (start_ix + k) & cmask;
-        fft_in[k].r = cbuf[ix];
-    }
-
-    kiss_fft(fft_s, fft_in, fft_out2);
-
-    // conjugate small window and correlate with large window
-    for (int k = 0; k < nfft; k++) {
-        float r1, c1, r2, c2;
-        r1 = fft_out[k].r;
-        c1 = -fft_out[k].i;
-        r2 = fft_out2[k].r;
-        c2 = fft_out2[k].i;
-
-        fft_in[k].r = fd_lpf[k] * (r1 * r2 - c1 * c2);
-        fft_in[k].i = fd_lpf[k] * (r1 * c2 + r2 * c1);
-    }
-    // inverse transform
-    kiss_fft(ifft_s, fft_in, fft_out);
-
-    float sumsq_ = fft_out[0].r / nfft;
-    float sumsq = sumsq_;
-
-    float df, cmdf, cmdf1, cmdf2, sum = 0;
-
-    float period = 0.0;
-
-    cmdf2 = cmdf1 = cmdf = 1;
-    for (int k = 1; k < maxT; k++) {
-        int ix1 = (start_ix + k) & cmask;
-        int ix2 = (start_ix + k + maxT) & cmask;
-
-        sumsq -= cbuf[ix1] * cbuf[ix1];
-        sumsq += cbuf[ix2] * cbuf[ix2];
-
-        df = sumsq + sumsq_ - 2 * fft_out[k].r / nfft;
-        sum += df;
-        cmdf2 = cmdf1;
-        cmdf1 = cmdf;
-        cmdf = (df * k) / sum;
-
-        if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf && cmdf1 < threshold && k > 20) {
-            period = (float) (k - 1) + 0.5 * (cmdf2 - cmdf) / (cmdf2 + cmdf - 2 * cmdf1);
-            break;
-        }
-    }
-
-    Tbuf[Tix++] = period;
-
-    if (Tix >= nmed)
-        Tix = 0;
-
-    memcpy(Tsrt, Tbuf, nmed * sizeof(float));
-    std::sort(Tsrt, Tsrt+nmed);
-    return Tsrt[nmed / 2];
-}
 
 #endif
 

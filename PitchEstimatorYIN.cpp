@@ -11,7 +11,8 @@ static void fft_free(DSPSplitComplex &p) {
     free(p.imagp);
 }
 
-PitchEstimatorYIN::PitchEstimatorYIN(int MaxT, int l2nfft, float thresh, int nmed) : maxT{MaxT}, l2nfft{l2nfft}, threshold{thresh}, nmed{nmed} {
+PitchEstimatorYIN::PitchEstimatorYIN(int MaxT, int l2nfft, float thresh, int nmed) : 
+    maxT{MaxT}, l2nfft{l2nfft}, threshold{thresh}, nmed{nmed} {
 
     nfft = 0x01 << l2nfft;
     fft_s = vDSP_create_fftsetup(l2nfft, 2);
@@ -125,3 +126,76 @@ float PitchEstimatorYIN::estimate(CircularAudioBuffer &b) {
     return Tsrt[nmed/2];
 }
 
+// KISS-FFT port for Android
+
+#if 0
+float HarmonizerDSPKernel::estimate_pitch(int start_ix) {
+    memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
+
+    for (int k = 0; k < maxT; k++) {
+        int ix = (start_ix + k) & cmask;
+        fft_in[k].r = cbuf[ix];
+    }
+
+    kiss_fft(fft_s, fft_in, fft_out);
+
+    //memset(fft_in, 0, nfft * sizeof(kiss_fft_cpx));
+
+    for (int k = maxT; k < 2 * maxT; k++) {
+        int ix = (start_ix + k) & cmask;
+        fft_in[k].r = cbuf[ix];
+    }
+
+    kiss_fft(fft_s, fft_in, fft_out2);
+
+    // conjugate small window and correlate with large window
+    for (int k = 0; k < nfft; k++) {
+        float r1, c1, r2, c2;
+        r1 = fft_out[k].r;
+        c1 = -fft_out[k].i;
+        r2 = fft_out2[k].r;
+        c2 = fft_out2[k].i;
+
+        fft_in[k].r = fd_lpf[k] * (r1 * r2 - c1 * c2);
+        fft_in[k].i = fd_lpf[k] * (r1 * c2 + r2 * c1);
+    }
+    // inverse transform
+    kiss_fft(ifft_s, fft_in, fft_out);
+
+    float sumsq_ = fft_out[0].r / nfft;
+    float sumsq = sumsq_;
+
+    float df, cmdf, cmdf1, cmdf2, sum = 0;
+
+    float period = 0.0;
+
+    cmdf2 = cmdf1 = cmdf = 1;
+    for (int k = 1; k < maxT; k++) {
+        int ix1 = (start_ix + k) & cmask;
+        int ix2 = (start_ix + k + maxT) & cmask;
+
+        sumsq -= cbuf[ix1] * cbuf[ix1];
+        sumsq += cbuf[ix2] * cbuf[ix2];
+
+        df = sumsq + sumsq_ - 2 * fft_out[k].r / nfft;
+        sum += df;
+        cmdf2 = cmdf1;
+        cmdf1 = cmdf;
+        cmdf = (df * k) / sum;
+
+        if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf && cmdf1 < threshold && k > 20) {
+            period = (float) (k - 1) + 0.5 * (cmdf2 - cmdf) / (cmdf2 + cmdf - 2 * cmdf1);
+            break;
+        }
+    }
+
+    Tbuf[Tix++] = period;
+
+    if (Tix >= nmed)
+        Tix = 0;
+
+    memcpy(Tsrt, Tbuf, nmed * sizeof(float));
+    std::sort(Tsrt, Tsrt+nmed);
+    return Tsrt[nmed / 2];
+}
+#endif
