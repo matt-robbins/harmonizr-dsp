@@ -13,7 +13,9 @@ TEST(TestPitchEst, TestYIN) {
 
     int l2n = 11;
     int N = 0x1 << l2n;
-    CircularAudioBuffer b = CircularAudioBuffer(N);
+    CircularAudioBuffer b = CircularAudioBuffer(l2n);
+
+    std::cout << "buflen = " << b.getSize() << "\n";
 
     int maxT = 400;
 
@@ -25,7 +27,7 @@ TEST(TestPitchEst, TestYIN) {
         int offset = 0;
         for (int k = 0; k < N + N/8 + 7; k++) {
             float val = cos(k * 2*M_PI / trueT) + sin(k * 4*M_PI/trueT);
-            b.insertValue(val);
+            b.pushValue(val);
         }
 
         float estT = p.estimate(b);
@@ -41,9 +43,9 @@ TEST(TestPitchEst, TestYIN) {
 }
 
 TEST(TestPitchEst, TestMark) {
-    int l2n = 11;
+    int l2n = 10;
     int N = 0x1 << l2n;
-    CircularAudioBuffer b = CircularAudioBuffer(N);
+    CircularAudioBuffer b = CircularAudioBuffer(l2n);
 
     int maxT = 400;
 
@@ -51,20 +53,42 @@ TEST(TestPitchEst, TestMark) {
 
     float trueT = 200;
     float phase = 0.0;
+    float sign = 1;
+    float val = 0;
 
-    std::cout << "pitch mark: " << m.getMark() << std::endl;
+    float data[5] = {5,5,10,6,5};
 
+    float median = median_idx(data,5);
+
+    //std::cout << "pitch mark: " << m.getMark() << std::endl;
+
+    float old_pix = 0;
     for (int k = 0; k < 100; k++) {
-        for (int k = 0; k <= trueT+30; k++) {
-            float val = cos(phase * 2*M_PI / trueT) + sin(phase * 4*M_PI/trueT);
-            b.insertValue(val);
+        for (int k = 0; k <= 128; k++) {
+            float val = cos(phase * 2*M_PI / trueT);
+            // triangle wave
+            // val += sign * 4/trueT;
+            // if (std::abs(val) >= 1) {
+            //     sign = -sign;
+            // }
+            //std::cerr << "val=" << val << "\n";
+            b.pushValue(val);
             phase += 1;
         }
 
         // give slightly wrong estimate for T
-        float pix = m.findMarkD(200, 0.25);
+        float pix = m.findMark(trueT-10, 0.5);
 
-        std::cout << b.getWriteIndex() - pix << " samples back, " << pix << std::endl;
+        float diff = pix - old_pix;
+        if (diff < 0)
+            diff += N;
+
+        std::cerr << " ***** pix moved forward by: " << diff << "\n";
+
+       // EXPECT_LT(fabs(pix-old_pix - trueT),5);
+        old_pix = pix;
+
+       // std::cout << b.getWriteIndex() - pix << " samples back, " << pix << std::endl;
     }
 }
 

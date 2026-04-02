@@ -51,11 +51,11 @@ float PitchEstimatorYIN::estimate(CircularAudioBuffer &b) {
     
     // copy first half, and compute FFT
     b.copyRange(2*maxT,maxT, fft_in.realp);
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, l2nfft, 1);
 
     // copy the rest and compute again for large window
     b.copyRange(maxT,maxT, fft_in.realp + maxT);
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, 11, 1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, l2nfft, 1);
     
     // conjugate small window and correlate with large window
     for (int k = 0; k < nfft; k++)
@@ -68,7 +68,7 @@ float PitchEstimatorYIN::estimate(CircularAudioBuffer &b) {
         fft_in2.imagp[k] = (r1*c2 + r2*c1);
     }
     // inverse transform
-    vDSP_fft_zopt(fft_s, &fft_in2, 1, &fft_out, 1, &fft_buf, 11, -1);
+    vDSP_fft_zopt(fft_s, &fft_in2, 1, &fft_out, 1, &fft_buf, l2nfft, -1);
     
     float sumsq_ = fft_out.realp[0]/nfft;
     float sumsq = sumsq_;
@@ -93,7 +93,7 @@ float PitchEstimatorYIN::estimate(CircularAudioBuffer &b) {
         cmdf2 = cmdf1; cmdf1 = cmdf[k-1];
         cmdf[k] = (df * k) / sum;
 
-        if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf[k] && cmdf1 < threshold && k > 20)
+        if (k > 0 && cmdf2 > cmdf1 && cmdf1 < cmdf[k] && cmdf1 < threshold && k > 3)
         {
             dead_count = 0;
             period = (float) (k-1) + 0.5*(cmdf2 - cmdf[k])/(cmdf2 + cmdf[k] - 2*cmdf1);

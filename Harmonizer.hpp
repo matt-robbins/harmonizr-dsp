@@ -5,16 +5,19 @@
 #include "PitchEstimator.hpp"
 #include "PitchMarker.hpp"
 #include <vector>
+#include <iostream>
 
 class PsolaVoice {
     public:
-        PsolaVoice(int maxOctave=4);
-        ~PsolaVoice();
+        PsolaVoice(int maxOctave=4)
+            : g(20) {
+        }
+        ~PsolaVoice() {}
         void updateT(float newT);
-        void compute(float *out[], int nch, int n);
+        GranularSynth g;
+
     private:
-        GranularSynth &g;
-        CircularAudioBuffer &buffer;
+        int graintable_size = 20;
         float gain = 1.0;
         float gain_target = 1.0;
         float pitch_ratio = 1.0;
@@ -38,15 +41,31 @@ class PsolaVoice {
 
 class Harmonizer {
     public:
-        Harmonizer(int Bufsize, int nvoices);
-        ~Harmonizer();
+        Harmonizer(int l2bufsize, int nvoices, int maxT) : 
+            maxT(maxT),
+            buffer(l2bufsize),
+            pEst(maxT, l2bufsize - 1, 0.2, 7),
+            pMark(buffer,maxT)
+        {
+            for (int k = 0; k < nvoices; k++) {
+                voices.push_back(PsolaVoice());
+            }
+        }
+        ~Harmonizer() {}
 
-        void compute(float *out[], int nch, int N);
+        void compute(float *in[], float *out[], int nch, int N);
+        void setVoiceT(int voice_n, float T);
+        void setPitchEstPeriod(int per);
+
     private:
         int nvoices = 0;
-        CircularAudioBuffer &buffer;
-        PitchEstimatorYIN &pEst;
-        PitchMarker &pMark;
+        int maxT = 20;
+        float T = 10;
+        int p_est_period = 256;
+        int p_est_ix = 0;
+        CircularAudioBuffer buffer;
+        PitchEstimatorYIN pEst;
+        PitchMarker pMark;
         std::vector<PsolaVoice> voices;
 };
 

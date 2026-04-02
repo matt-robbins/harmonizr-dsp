@@ -9,6 +9,7 @@
 #define Looper_h
 
 #include <stdlib.h>
+#include <vector>
 #include "Window.hpp"
 
 class Looper {
@@ -20,7 +21,7 @@ public:
         LoopPlayRec,
         LoopPause
     };
-    Looper(int channels, int L, int xfn, Window *w);
+    Looper(int channels=1, int L=44100, int xfn=100, int wlen=200);
     ~Looper();
 
     // run on an array of channel data buffers
@@ -31,15 +32,14 @@ public:
     loopMode loop_mode;
 
 private:
-    Window *win;
-    Window *dwin;
+    Window win;
     int ix; // current position
     int L; // total length
     int n; // current loop length
     int xfn; // cross fade duration in samples
     int xf; // current x-fade position
     int channels;
-    float ** buffers; //one per channel
+    std::vector<std::vector<float>> buffers; //one per channel
 };
 
 

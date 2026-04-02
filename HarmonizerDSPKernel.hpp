@@ -16,7 +16,13 @@
 #import <sys/time.h>
 #include "ButterworthFilter.hpp"
 #include "CircularAudioBuffer.hpp"
+#include "Window.hpp"
 #include "PitchEstimator.hpp"
+#include "PitchMarker.hpp"
+#include "SimplePitchShifter.hpp"
+#include "GranularSynth.hpp"
+#include "Looper.h"
+#include "NoiseGate.hpp"
 
 #ifdef __APPLE__
 #import "DSPKernel.hpp"
@@ -110,6 +116,7 @@ enum {
     HarmParamMidi,
     HarmParamMidiLink,
     HarmParamMidiLegato,
+    HarmParamMidiVelIgnore,
     HarmParamMidiKeyCC,
     HarmParamMidiKeyCcOffset,
     HarmParamMidiQualCC,
@@ -197,7 +204,6 @@ class HarmonizerDSPKernel {
 private:
     inline float window_value(float f);
     void psola(float *out, float *out2, int n);
-    void findmark (void);
     
     void update_voices (void);
     
@@ -218,11 +224,18 @@ public:
     int n_channels = 0;
 
     HarmonizerDSPKernel() : 
-        raw_buffer { CircularAudioBuffer(nfft*2)},
-        filtered_buffer { CircularAudioBuffer(nfft*2)},
-        pitchEstimator { PitchEstimatorYIN(maxT,l2nfft,threshold,nmed) }
+        raw_buffer { CircularAudioBuffer(l2nfft+1) },
+        filtered_buffer { CircularAudioBuffer(l2nfft+1) },
+        noise_gate { NoiseGate(-36.f,3.f,48000,12000)},
+        pitchEstimator { PitchEstimatorYIN(maxT,l2nfft,threshold,nmed) },
+        pitchMarker { PitchMarker(raw_buffer,maxT) },
+        window { Window(Window::Hann, nfft)},
+        looper { Looper()}
     {
-        
+        for (int i = 0; i < nvoices; i++){
+            simpleVoices.push_back(SimplePitchShifter(raw_buffer,window,maxT));
+            psolaVoices.push_back(GranularSynth(20));
+        }
         fprintf(stderr, "bufsize = %d\n", raw_buffer.getSize());
     }
 	
@@ -233,6 +246,8 @@ public:
     void setParameter(param_address_t address, param_value_t value);
     param_value_t getParameter(param_address_t address);
     float loopPosition();
+    int getLoopMode();
+    int setLoopMode(int mode);
 
     void setBuffers(float ** in, float ** out);
 
@@ -263,6 +278,7 @@ private:
     int l2nfft = 11;
     int nfft = 1 << l2nfft;
     int maxT = 600; // note nfft should be bigger than 3*maxT
+    int minT = 25; // corresponds to A6 (basically impossible)
     float threshold = 0.2; // for YIN pitch estimator
     int nmed = 7; // length of median filter for YIN estimator
     
@@ -277,7 +293,14 @@ private:
     ButterworthFilter filter;
     CircularAudioBuffer raw_buffer;
     CircularAudioBuffer filtered_buffer;
+    NoiseGate noise_gate;
+    Window window;
     PitchEstimatorYIN pitchEstimator;
+    PitchMarker pitchMarker;
+    std::vector<SimplePitchShifter> simpleVoices;
+    std::vector<GranularSynth> psolaVoices;
+    
+    Looper looper;
     
     float * in_filt;
     float * cbuf;
@@ -309,24 +332,20 @@ private:
     float nse_floor = 1.0;
     float rcnt = 256;
     float T = 400;
-    float Tbuf[7];
-    float Tsrt[7];
     int nAmpl = 50;
     float Abuf[50];
-    int Tix;
-    float pitchmark[3] = {0,-1,-1};
     
     int cmask = ncbuf - 1;
     int voiced = 0;
     float noise_pct = 0.0;
-	float sampleRate = 44100.0;
+    float sampleRate = 44100.0;
     float baseTuning = 440.0;
     int keycenter = 0;
     float midinotes[128];
     float midigain = 1.0;
-    float harmgain = 0.0;
+    float harmgain = 1.0;
     float harmgain_target = 1.0;
-    float voicegain = 0.0;
+    float voicegain = 1.0;
     float voicegain_target = 1.0;
     float dry_mix = 1.0;
     float speed = 1.0;
@@ -356,6 +375,7 @@ private:
     int midi_transmit_harmony = 0;
     int midi_transmit_melody = 0;
         
+    int midi_ignore_velocity = 0;
     int midi_legato = 0;
     int midi_pedal = 0;
     int auto_enable = 1;

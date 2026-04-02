@@ -15,11 +15,11 @@ TEST(TestCbuf, TestCenter) {
     CircularAudioBuffer b = CircularAudioBuffer(N);
 
     SimplePitchShifter p = SimplePitchShifter(b,w,16);
-    p.setPeriod(T);
-    p.setRatio(12.0/23.0f);
+    p.T = T;
+    p.ratio = (12.0/23.0f);
 
     for (int k = 0; k < N; k++) {
-        b.insertValue(sinf(M_PI*2*k/T));
+        b.pushValue(sinf(M_PI*2*k/T));
     }
 
     for (int k = 0; k < N; k++) {

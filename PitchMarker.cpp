@@ -1,73 +1,57 @@
 #include "PitchMarker.hpp"
 #include <iostream>
+#include <algorithm>
+#include <numeric>
+#include "Util.hpp"
 
 PitchMarker::PitchMarker(CircularAudioBuffer &b, float maxT) : b{b}, maxT{maxT} {
-    pix = b.getWriteIndex() - maxT/2;
+    //std::cerr << "buffer size " << b.getSize() << std::endl;
+    //std::cerr << "maxT" << maxT << std::endl;
+    mark = b.getWriteIndex() - maxT/2;
+    //std::cerr << "mark " << mark << std::endl;
 }
 PitchMarker::~PitchMarker() { }
 
 float PitchMarker::getMark() {
-    return pix;
+    return mark;
 }
 
-float PitchMarker::findMark(float T, float frac) {
+bool PitchMarker::findMark(float T, float frac) {
     int wp = b.getWriteIndex();
 
     // this condition is true if and only if b has circled around to 0. 
-    if (pix > wp) {
-        pix -= b.getSize();
+    if (mark > wp) {
+        //std::cerr << "jumping back around\n";
+        mark -= b.getSize();
+    }
+
+    // return without finding new mark if it hasn't been "long enough".
+    if (wp - mark < (maxT + T*1.25)){
+        //std::cout << "wp-mark <" << (maxT + T*1.25) << std::endl;
+        //std::cerr << "not finding! wp = " << wp << " pix = " << pix << "\n";
+        return false;
     }
     
-    // return without finding new mark if it hasn't been "long enough".
-    if (wp - pix < (maxT/2 + T*1.25))
-        return pix;
-
     // swap marks
-    old_pix = pix; 
-    pix += T;
+    old_mark = mark;
+    mark += T;
 
     // Jump forward to the latest if there is too much space
-    while (wp - pix > (maxT/2 + 2*T)) {
-        std::cout << "jumping..." << std::endl;
-        pix += T;
+    while (wp - mark > (3*maxT/2)) {
+        //std::cerr << "jumping..." << std::endl;
+        mark += T;
     }
 
-    int srch_rng = (int) T * frac;
-
-    // get minimum
-    float min = HUGE_VALF;
-    for (float k = -srch_rng; k <= srch_rng; k++){
-        float val = b[pix+lrintf(k)];
-        if (val < min)
-            min = val;
-    }
+    int srch_rng = (int) floorf(T * frac);
     
-    // get sum, subtracting off min
-    float sum = 0;
-    for (float k = -srch_rng; k <= srch_rng; k++){
-        float add = b[pix+lrintf(k)] - min;
-        sum += add;
-    }
+
+    int vlen = srch_rng * 2 + 1;
+    float * data = b.getContiguous(floorf(mark - srch_rng));
+    float shunt_frac = mark - floorf(mark);
 
     // find median, as in a distribution
-    float csum = 0, last_csum = 0;
-    float median = 0;
-    for (float k = -srch_rng; k <= srch_rng; k++){
-        csum += (b[pix+k] - min);
-        if (csum <= sum/2){
-            last_csum = csum;
-            continue;
-        }
-
-        // linearly interpolate
-        float frac = ((sum/2)-last_csum)/(csum-last_csum);
-        median = k-1+frac; 
-        break; 
-    }
-
-    std::cout << "median: " << median << std::endl;
-    if (sum > 0)
-        pix += median;
-        
-    return pix;
+    float median = median_idx(data,vlen) - srch_rng - shunt_frac;
+   // std::cout << "median=" << median << "\n";
+    mark += median;
+    return true;
 }

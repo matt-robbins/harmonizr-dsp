@@ -4,36 +4,50 @@
 #include "Window.hpp"
 #include <vector>
 
-typedef struct Grain
+struct Grain
 {
-    float size, start, ix, ratio, gain, pan;
-    CircularAudioBuffer *b;
-    Grain(){
-        size = -1.0;
-        start = -1.0;
-        ix = 0.0;
-        ratio = 1.0;
-        gain = 1.0;
-        pan = 0.0;
-        b = nullptr;
-    };
-} Grain;
+    float size = -1.0;
+    float ix = 0.0;
+    float win_ix = 0;
+    float * data = nullptr;
+    float offset = 0;
+};
 
 class GranularSynth {
 public:
     GranularSynth(int table_size);
-    ~GranularSynth();
+    //~GranularSynth();
 
-    void newGrain(CircularAudioBuffer *b, float start_ix, int size, float gain, float ratio, float pan);
+    void newGrain(float * data, float offset, float start_ix);
     float synthesizeOne();
     void synthesize(float *out, int n);
+    void setGrainSource(float *data, float offset, float length);
+    float* getGrainSource();
+    float setVibratoRate(float freq);
+    float setVibratoAmpl(float amp);
+    bool enable = true;
+    bool win_enable = true;
+    
+    float T = 0;
+    float gain = 1.0;
+    float ratio = 1.0;
+    
 private:
 
     int N;
     std::vector<Grain> grains;
     int maxgrain = 0;
+    float nextgrain = 0.0;
+    float * source = nullptr;
+    float length = 0.0;
+    float offset = 0.0;
+    float fs;
+    
+    float vib_f = 0.f;
+    float vib_a = 0.f;
+    float theta = 0.f;
 
-    Window win = Window(Window::Hann, 64);
+    Window win;
 };
 
 #endif

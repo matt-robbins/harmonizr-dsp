@@ -7,6 +7,7 @@
 
 // NB This file must be set to type "Objective-C++ source in XCode"
 #include <stdio.h>
+#include <iostream>
 #include "HarmonizerDSPKernel.hpp"
 
 
@@ -23,7 +24,7 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
     fft_in.imagp = (float *) calloc(nfft, sizeof(float));
     
     fft_out.realp = (float *) calloc(nfft, sizeof(float));
-    fft_out.imagp = (float *) calloc(nfft, sizeof(float));
+    fft_out.imagp = (float *) calloc(nfft, sizeof(float)); 
     
     fft_out2.realp = (float *) calloc(nfft, sizeof(float));
     fft_out2.imagp = (float *) calloc(nfft, sizeof(float));
@@ -89,12 +90,14 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
         //fprintf(stderr, "%f\n", fd_lpf[k]);
     }
     
-    loop_buf = (float **) calloc(2, sizeof(float *));
-    loop_max = (int) (sampleRate * 60);
-    for (int k = 0; k < 2; k++)
-    {
-        loop_buf[k] = (float *) calloc(loop_max, sizeof(float));
-    }
+//    loop_buf = (float **) calloc(2, sizeof(float *));
+//    loop_max = (int) (sampleRate * 60);
+//    for (int k = 0; k < 2; k++)
+//    {
+//        loop_buf[k] = (float *) calloc(loop_max, sizeof(float));
+//    }
+    
+    looper = Looper(n_channels,60*sampleRate,(int)lrintf(0.05*sampleRate),(int)lrintf(0.05*sampleRate));
     
     for (int k = 0; k < nvoices; k++)
     {
@@ -117,11 +120,16 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
         voices[k].gain = 1.0;
         voices[k].target_gain = 1.0;
         
-        if (k >= 3)
+        if (k >= N_AUTO)
         {
             voices[k].pan = ((float)(k - 3) / (float)(nvoices - 3)) - 0.5;
             //voices[k].formant_ratio = ((float)(k - 3) / (float)(nvoices - 3)) + 0.5;
+            //psolaVoices[k].enable = false;
         }
+        
+        psolaVoices[k].setGrainSource(fd_lpf, fc, 0);
+        psolaVoices[k].T = 200;
+        psolaVoices[k].ratio = 1.0;
     }
     
     voices[1].formant_ratio = 0.99;
@@ -139,10 +147,7 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
         grains[k].ix = 0;
         grains[k].gain = 1;
     }
-    
-    memset(Tbuf, 0, 7*sizeof(float));
-    Tix = 0;
-    
+        
     // create grain window with zero-padded shoulders
     grain_window = new float[graintablesize + 6];
     memset(grain_window, 0, (graintablesize + 6) * sizeof(float));
@@ -251,9 +256,6 @@ void HarmonizerDSPKernel::reset() {
     rix = 0;
     rcnt = 256;
     T = 400;
-    
-    pitchmark[0] = 0;
-    pitchmark[1] = -1;
 }
 
 void HarmonizerDSPKernel::setBuffers(float ** in, float ** out) {
@@ -266,7 +268,6 @@ void HarmonizerDSPKernel::setBuffers(float ** in, float ** out) {
 }
 
 void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t value) {
-    int old_mode = loop_mode;
     switch (address) {
         case HarmParamKeycenter:
             root_key = (int) clamp(value,0.f,47.f);
@@ -295,6 +296,9 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             break;
         case HarmParamMidiLink:
             midi_link = (int) clamp(value,0.f,1.f);
+            break;
+        case HarmParamMidiVelIgnore:
+            midi_ignore_velocity = (int) clamp(value,0.f, 1.f);
             break;
         case HarmParamMidiKeyCC:
             midi_keycenter_cc = (int) clamp(value,0.f,127.f);
@@ -369,19 +373,8 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             break;
         case HarmParamLoop:
             //int old_mode = loop_mode;
-            loop_mode = (int) clamp(value, 0.f, 4.f);
-            fprintf(stderr, "set loop mode to %d\n", loop_mode);
-            if ((old_mode == LoopRec) && (loop_n == 0))
-            {
-                loop_n = loop_ix;
-                loop_xf = loop_xfn;
-            }
-            if (loop_mode == LoopStopped)
-            {
-                loop_n = 0;
-                loop_ix = 0;
-            }
-            break;
+            looper.setMode(static_cast<Looper::loopMode>(value));
+           
         case HarmParamInterval:
         default:
             int addr = (int) address - (int) HarmParamInterval;
@@ -419,6 +412,8 @@ param_value_t HarmonizerDSPKernel::getParameter(param_address_t address) {
             return (float) midi_link;
         case HarmParamMidiLegato:
             return (float) midi_legato;
+        case HarmParamMidiVelIgnore:
+            return (float) midi_ignore_velocity;
         case HarmParamMidiKeyCC:
             return (float) midi_keycenter_cc;
         case HarmParamMidiKeyCcOffset:
@@ -739,17 +734,14 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
     }
     
     int n_computed = 0;
-
+    
     // For each sample.
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
     {
-        cbuf[cix] = in[frameIndex];
         raw_buffer.pushValue(in[frameIndex]);
-        fbuf[cix] = filter.compute_one(cbuf[cix]);
         filtered_buffer.pushValue(filter.compute_one(in[frameIndex]));
-        
-        measure_snr(cbuf[cix]);
-        
+        noise_gate.compute_one(in[frameIndex]);
+                
         if (bypass)
         {
             out[frameIndex] = in[frameIndex] / 2;
@@ -761,52 +753,50 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
             out[frameIndex] = out2[frameIndex] = 0;
         }
         
-        if (cix < 3)
-        {
-            cbuf[ncbuf+cix] = cbuf[cix];
-            fbuf[ncbuf+cix] = fbuf[cix];
-        }
-        if (++cix >= ncbuf)
-            cix = 0;
-        
         if (--rcnt == 0)
         {
             rcnt = 256;
             int oldT = T;
-            //float p = estimate_pitch(cix - 2*maxT);
             float p = pitchEstimator.estimate(filtered_buffer);
-            if (p > 0)
-                T = p;
-            else
+            if (p == 0)
                 T = oldT + 0.1 * (400 - oldT);
-                            
+            else if (p < minT)
+                T = minT;
+            else
+                T = p;
+            
             voiced = (p != 0);
             
             if (synth_enable)
             {
                 //get_model(cix - 3*T);
-                get_minphase_pulse(cix - nfft);
+                get_minphase_pulse(-nfft);
             }
             
             update_voices();
         }
         
-        float dp = cix - 2*maxT - pitchmark[0];
-        if (dp < 0)
-            dp += ncbuf;
-        
-        if (dp > (T + T/4))
+        if (pitchMarker.findMark(T,0.25))
         {
-            findmark();
-            
+            //std::cerr << "d=" << raw_buffer.getWriteIndex() - pitchMarker.mark << std::endl;
+            // set synth source
+            for (int k = 0; k < nvoices; k++){
+                float * buf = synth_enable ? synth_pulse[synth_pulse_ix] : raw_buffer.getContiguous(pitchMarker.mark-T);
+                
+                psolaVoices[k].setGrainSource(buf, 0, 2*T);
+                //psolaVoices[k].win_enable = !synth_enable;
+            }
+                        
             int nn = frameIndex - n_computed;
             psola(out+n_computed, out2+n_computed, nn);
             n_computed += nn;
         }
-        float x = autotune ? pitch_resample() : in[frameIndex];
+        
+        float at = simpleVoices[0].computeOne();
+        
+        float x = autotune ? at : in[frameIndex];
         out[frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
-        if (stereo_mode != StereoModeSplit)
-        {
+        if (stereo_mode != StereoModeSplit){
             out2[frameIndex] = out[frameIndex];
         }
     }
@@ -818,51 +808,7 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
             
     // compute looping stuff
     
-    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
-    {
-        float l0,l1;
-        l0 = loop_buf[0][loop_ix]; l1 = loop_buf[1][loop_ix];
-        
-        float i0 = out[frameIndex],i1 = out2[frameIndex];
-        
-        if (loop_xf > 0)
-        {
-            loop_xf--;
-            float w = window_value((float) loop_xf / (2*loop_xfn));
-            //fprintf(stderr, "w = %f\n", w);
-            i0 = out[frameIndex] * w + l0 * (1 - w);
-            i1 = out[frameIndex] * w + l1 * (1 - w);
-        }
-        
-        switch (loop_mode)
-        {
-            case LoopRec:
-                loop_buf[0][loop_ix] = i0; loop_buf[1][loop_ix] = i1;
-                loop_ix++;
-                break;
-            case LoopPlayRec:
-                loop_buf[0][loop_ix] += i0; loop_buf[1][loop_ix] += i1;
-                out[frameIndex] += l0; out2[frameIndex] += l1;
-                loop_ix++;
-                break;
-            case LoopPlay:
-                out[frameIndex] += l0; out2[frameIndex] += l1;
-                if (loop_xf > 0)
-                {
-                    loop_buf[0][loop_ix] = i0; loop_buf[1][loop_ix] = i1;
-                }
-                loop_ix++;
-                break;
-        }
-        
-        if ((loop_ix >= loop_max) || ((loop_ix >= loop_n) && (loop_n > 0)))
-        {
-            loop_ix = 0;
-//                if (loop_mode == LoopRec || loop_mode == LoopPlayRec)
-//                loop_xf = loop_xfn;
-            //fprintf(stderr, "frameIndex@loop=%d\n", frameIndex);
-        }
-    }
+    looper.compute(out_buffers, bufferOffset, frameCount);
 }
 
 inline float HarmonizerDSPKernel::measure_snr(float in)
@@ -909,7 +855,8 @@ void HarmonizerDSPKernel::psola(float *out, float *out2, int n)
         
         for (int vix = first_psola_voice; vix < nvoices; vix++)
         {
-            voices[vix].target_gain = ((voiced || nonvoiced_count == 0) && voices[vix].midinote > 0) ? 1.0 : 0.0;
+            voices[vix].target_gain =  noise_gate.get_gain() *
+                (((voiced || nonvoiced_count == 0) && voices[vix].midinote > 0) ? (float) voices[vix].midivel / 127.f : 0.0);
             
             if (voices[vix].target_gain > 0)
                 nonvoiced_count++;
@@ -925,291 +872,25 @@ void HarmonizerDSPKernel::psola(float *out, float *out2, int n)
             if (vix >= n_auto && !midi_enable)
                 continue;
             
-            float unvoiced_offset = 0;
-            //                if (!voiced && vix > 5)
-            //                {
-            //                    continue;
-            //                    //unvoiced_offset = T * (0.5 - (float) rand() / RAND_MAX);
-            //                }
+            float u = psolaVoices[vix].synthesizeOne() * harmgain * voices[vix].gain;
+            //float u = simpleVoices[vix].computeOne() * harmgain * voices[vix].gain;
             
-            float midigain_local = 1.0;
-            if (vix >= 3)
-                midigain_local = midigain;
-            
-            if (--voices[vix].nextgrain < 0)
+            switch (stereo_mode)
             {
-                // search for the first open grain
-                int found_grain = 0;
-                for (int k = 0; k < ngrains; k++)
-                {
-                    if (grains[k].size < 0)
-                    {
-                        grains[k].size = 2 * T;
-                        grains[k].start = pitchmark[0] - voices[vix].nextgrain - T + unvoiced_offset;
-                        grains[k].ratio = voices[vix].formant_ratio;
-                        grains[k].synth_ix = synth_pulse_ix;
-                        //memcpy(grains[k].data,synth_pulse,roundf(2*T)*sizeof(float));
-                        
-                        grains[k].ix = 0;
-                        grains[k].gain = midigain_local * (float) voices[vix].midivel / 127.0;
-                        grains[k].pan = voices[vix].pan;
-                        grains[k].vix = vix;
-                        
-                        if (vix == 0){
-                            grains[k].gain = 1.0;
-                        }
-                        
-                        if (!voiced){
-                            grains[k].ratio = 1.0; //voices[vix].ratio;
-                        }
-                        else
-                        {
-                            // for low transpositions, increase gain
-                            if (voices[vix].ratio < 1)
-                                grains[k].gain *= powf(1/voices[vix].ratio,0.5);
-                        }
-                        
-                        //voices[vix].nextgrain += voiced ? (T / voices[vix].ratio) : T;
-                        
-                        float v_per = (T / voices[vix].ratio);
-                        if (!voiced)
-                            v_per = T;
-                        
-                        while (voices[vix].nextgrain < 0)
-                            voices[vix].nextgrain += v_per;
-                        
-                        voices[vix].vib_phase += 2*M_PI * (v_per / (sampleRate/voices[vix].vibrato_rate));
-                        if (voices[vix].vib_phase > 2*M_PI)
-                            voices[vix].vib_phase -= 2*M_PI;
-                        
-                        float vib_delay = vibrato * voices[vix].vibrato_amp * v_per * sinf(voices[vix].vib_phase);
-                        voices[vix].nextgrain += vib_delay;
-                        
-                        //printf("phase = %f\n", voices[vix].vib_phase);
-                        if (k > maxgrain)
-                            maxgrain = k;
-                        
-                        found_grain = true;
-                        break;
-                    }
-                }
-                
-                if (found_grain == false)
-                {
-                    fprintf(stderr, "couldn't find grain!\n");
-                }
-                for (int k = maxgrain; k > 0; k--)
-                {
-                    if (grains[k].size >= 0)
-                        break;
-                    
-                    maxgrain = k;
-                }
-            }
-        }
-        
-        for (int ix = 0; ix <= maxgrain; ix++)
-        {
-            grain_t g = grains[ix];
-            
-            // if this grain has been "triggered", it's size is > 0
-            if (g.size > 0)
-            {
-                float fi = g.start + g.ix;
-                
-                if (fi >= ncbuf)
-                    fi -= ncbuf;
-                else if (fi < 0)
-                    fi += ncbuf;
-                
-                int i = (int) fi;
-                //float u = cbuf[i];
-                float u = cubic (cbuf + i, fi - i);
-                
-                float wi = 2 + graintablesize * (g.ix / g.size);
-                i = (int) wi;
-                float w = cubic (grain_window + i, wi - i);
-                
-                //w = 1;
-                
-                // shrink left side of the window to create a sharper attack,
-                // which should translate to a cleaner sound for high transpositions.
-                
-                float f = g.ix/g.size;
-                
-                if (f < 0.5 && voices[g.vix].ratio > 1)
-                {
-                    f = 0.5 - (0.5 - f)*voices[g.vix].ratio;
-                }
-                
-                w = window_value(f);
-                
-                u = u * w;
-                
-                float mix = 0.0;
-                if (voices[g.vix].ratio > 1.8){
-                    mix = fmax(0.0, 1.0 - (voices[g.vix].ratio - 1.8));
-                }
-                
-                mix = 0.0;
-                
-                if (synth_enable)
-                {
-                    u = (mix * u) + (1 - mix) * cubic(synth_pulse[g.synth_ix] + (int)(g.ix)+3, g.ix - floorf(g.ix));
-                    //u = synth_pulse[(int) g.ix];
-                }
-                
-                float hgain = g.vix ? harmgain : 1.0;
-                
-                switch (stereo_mode)
-                {
-                    case StereoModeNormal:
-                        out[sample_ix] += u * hgain * w * g.gain * voices[g.vix].gain * (g.pan + 1.0)/2;
-                        out2[sample_ix] += u * hgain * w * g.gain * voices[g.vix].gain * (-g.pan + 1)/2;
-                        break;
-                    case StereoModeMono:
-                        out[sample_ix] += u * hgain * w * g.gain * voices[g.vix].gain;
-                        out2[sample_ix] = out[sample_ix];
-                        break;
-                    case StereoModeSplit:
-                        out2[sample_ix] += u * hgain * w * g.gain * voices[g.vix].gain;
-                        break;
-                }
-                
-                g.ix += g.ratio;
-                
-                if (g.ix > g.size)
-                {
-                    g.size = -1;
-                    //printf("ending grain %d\n", ix);
-                }
-                
-                grains[ix] = g;
+                case StereoModeNormal:
+                    out[sample_ix] += u * (voices[vix].pan + 1.0)/2.f;
+                    out2[sample_ix] += u * (-voices[vix].pan + 1.0)/2.f;
+                    break;
+                case StereoModeMono:
+                    out[sample_ix] += u/2.f;
+                    out2[sample_ix] = out[sample_ix];
+                    break;
+                case StereoModeSplit:
+                    out2[sample_ix] += u;
+                    break;
             }
         }
     }
-}
-
-void HarmonizerDSPKernel::findmark (void)
-{
-    int mask = ncbuf - 1;
-    
-    memmove(pitchmark + 1, pitchmark, 2 * sizeof(float));
-    pitchmark[0] = pitchmark[1] + T;
-    
-    if (pitchmark[0] >= ncbuf - 1)
-        pitchmark[0] -= ncbuf;
-    
-    if (!voiced)
-        return;
-    
-    // find center of mass around next pitch mark
-    float mean = 0.0;
-    float min = HUGE_VALF;
-    
-    int srch_n = (int)T/4;
-    
-    for (int k = -srch_n; k < srch_n; k++)
-    {
-        int ix = ((int) pitchmark[0] + k) & mask;
-        if (cbuf[ix] < min)
-            min = cbuf[ix];
-    }
-    
-    mean = 0;
-    float sum = 0, csum = 0;
-    for (int k = -srch_n; k < srch_n; k++)
-    {
-        int ix = ((int) pitchmark[0] + k) & mask;
-        mean += (float) k * (cbuf[ix] - min);
-        sum += (cbuf[ix] - min);
-    }
-    mean /= sum;
-    int median = 0;
-    for (int k = -srch_n; k < srch_n; k++)
-    {
-        int ix = ((int) pitchmark[0] + k) & mask;
-        csum += (cbuf[ix] - min);
-        if (csum > sum/2)
-        {
-            median = k; break;
-        }
-    }
-    
-    if (sum == 0)
-        pitchmark[0] += T;
-    else
-    {
-        pitchmark[0] += median;
-    }
-    
-    if (pitchmark[0] < 0)
-        pitchmark[0] += ncbuf;
-    else if (pitchmark[0] > ncbuf - 1)
-        pitchmark[0] -= ncbuf;
-}
-
-float HarmonizerDSPKernel::pitch_resample()
-{
-    static int was_autotune = autotune;
-
-    float d;
-    
-    if (autotune)
-    {
-        voices[0].ix1 += voices[0].ratio;
-        voices[0].ix2 += voices[0].ratio;
-        d = cix - voices[0].ix1;
-        while (d < 0)
-            d += ncbuf;
-        
-        if (d > (ncbuf/2) + T)
-        {
-            voices[0].ix2 = voices[0].ix1; voices[0].ix1 += T;
-            voices[0].xfade_ix = (int) T/4;
-            voices[0].xfade_dur = (int) T/4;
-            //fprintf(stderr, "xfade forward %d\n", (int) T / 2);
-        }
-        if (d < (ncbuf/2) - T)
-        {
-            voices[0].ix2 = voices[0].ix1; voices[0].ix1 -= T;
-            voices[0].xfade_ix = (int) T/4;
-            voices[0].xfade_dur = (int) T/4;
-            //fprintf(stderr, "xfade back %d\n", (int) T / 2);
-        }
-    }
-    else
-    {
-        voices[0].ix1 += 1;
-        voices[0].ix2 += 1;
-    }
-    
-    if (!autotune && was_autotune)
-    {
-        voices[0].ix2 = voices[0].ix1; voices[0].ix1 = cix-1;
-        voices[0].xfade_ix = voices[0].xfade_dur = (int) T/2;
-        //fprintf(stderr, "xfading!\n");
-    }
-
-    if (voices[0].ix1 < 2) voices[0].ix1 += ncbuf;
-    if (voices[0].ix1 > ncbuf+1) voices[0].ix1 -= ncbuf;
-    
-    if (voices[0].ix2 < 2) voices[0].ix2 += ncbuf;
-    if (voices[0].ix2 > ncbuf+1) voices[0].ix2 -= ncbuf;
-    
-    float ret = 0.;
-    if (voices[0].xfade_ix > 0)
-    {
-        float mix = window_value(0.5*(float)voices[0].xfade_ix / (float)voices[0].xfade_dur);
-
-        ret = mix * cubic_interp(cbuf, voices[0].ix2) + (1-mix) * cubic_interp(cbuf, voices[0].ix1);
-        voices[0].xfade_ix--;
-    }
-    else
-        ret = cubic_interp(cbuf, voices[0].ix1);
-    
-    was_autotune = autotune;
-    return ret;
 }
 
 #ifdef __APPLE__
@@ -1219,10 +900,11 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
     memset(fft_in.realp, 0, nfft * sizeof(float));
     memset(fft_in.imagp, 0, nfft * sizeof(float));
     static int count = 0;
+    float * input = raw_buffer.getContiguousRelative(start_ix);
     for (int k = 0; k < nfft; k++)
     {
-        int ix = (start_ix + k) & cmask;
-        fft_in.realp[k] = cbuf[ix] * window_value((float)k/(nfft));
+        //int ix = (start_ix + k) & cmask;
+        fft_in.realp[k] = input[k] * window_value((float)k/(nfft));
     }
     
     vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
@@ -1332,8 +1014,8 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
     
     for (int k = 0; k < 2*maxT; k++)
     {
-        synth_pulse[synth_pulse_ix][k] = mix*fft_out.realp[k]/sqrtf(nfft)/4;
-        synth_pulse[synth_pulse_ix][k] += fft_out2.realp[k]/16;
+        synth_pulse[synth_pulse_ix][k] = mix*fft_out.realp[k]/sqrtf(nfft)/16;
+        //synth_pulse[synth_pulse_ix][k] += fft_out2.realp[k]/16;
     }
             
     return 0.0;
@@ -1429,6 +1111,8 @@ void HarmonizerDSPKernel::addnote(int note, int vel)
     midi_changed_sample_num = sample_count;
     midi_changed = 1;
     
+    int vel_ = midi_ignore_velocity ? 100 : vel;
+    
     keys_down[note] = 1;
     
 //        if (!midi_enable)
@@ -1455,7 +1139,7 @@ void HarmonizerDSPKernel::addnote(int note, int vel)
         {
             voices[min_ix].lastnote = voices[min_ix].midinote;
             voices[min_ix].midinote = note;
-            voices[min_ix].midivel = vel;
+            voices[min_ix].midivel = vel_;
             voices[min_ix].sample_num = sample_count;
             //voices[min_ix].ratio = 1.0;
             //voices[min_ix].nextgrain = 0;
@@ -1478,7 +1162,7 @@ void HarmonizerDSPKernel::addnote(int note, int vel)
     
     voices[min_ix].lastnote = voices[min_ix].midinote;
     voices[min_ix].midinote = note;
-    voices[min_ix].midivel = vel;
+    voices[min_ix].midivel = vel_;
     voices[min_ix].sample_num = sample_count;
     //voices[min_ix].nextgrain = 0;
     
@@ -1788,8 +1472,7 @@ void HarmonizerDSPKernel::update_voices (void)
         voice_notes_old[k] = voice_notes[k];
         voice_notes[k] = midi_note_number + interval_offsets[k + (interval*4) + (quality*48)];
         
-        if (k > inversion)
-        {
+        if (k > inversion){
             voice_notes[k] -= 12;
         }
         
@@ -1808,7 +1491,7 @@ void HarmonizerDSPKernel::update_voices (void)
     {
         for (int k = 0; k < n_auto; k++)
         {
-            voices[k].ratio = voices[k].target_ratio = 1.0;
+            simpleVoices[k].ratio = voices[k].ratio = voices[k].target_ratio = 1.0;
         }
     }
     
@@ -1887,22 +1570,28 @@ void HarmonizerDSPKernel::update_voices (void)
         
         if (k == 0)
         {
-            voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
+            simpleVoices[k].ratio = voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
+            psolaVoices[k].T = T / simpleVoices[k].ratio;
         }
         else
         {
-            voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
+            simpleVoices[k].ratio = voices[k].ratio = v1frac * voices[k].ratio + (1-v1frac) * voices[k].target_ratio;
+            psolaVoices[k].T = T / simpleVoices[k].ratio;
         }
     }
 }
 
 
 float HarmonizerDSPKernel::loopPosition() {
-    if (loop_n <= 0)
-    {
-        return (float) loop_ix / (float) loop_max;
-    }
-    return (float) loop_ix / (float) loop_n;
+    return looper.position();
+}
+
+int HarmonizerDSPKernel::setLoopMode(int mode) {
+    looper.setMode(static_cast<Looper::loopMode>(mode));
+    return mode;
+}
+int HarmonizerDSPKernel::getLoopMode() {
+    return looper.loop_mode;
 }
 
 inline float HarmonizerDSPKernel::window_value(float f)

@@ -2,16 +2,6 @@
 #include "Util.hpp"
 #include <iostream>
 
-static void fft_alloc(DSPSplitComplex &p, int nfft) {
-    p.realp = (float *) calloc(nfft, sizeof(float));
-    p.imagp = (float *) calloc(nfft, sizeof(float));
-}
-
-static void fft_free(DSPSplitComplex &p) {
-    free(p.realp);
-    free(p.imagp);
-}
-
 PitchEstimatorSHS::PitchEstimatorSHS(int MaxT, int l2nfft, float thresh, int nmed, float fs) :
 maxT{MaxT}, l2nfft{l2nfft}, threshold{thresh}, nmed{nmed}, FS{fs},
 w {Window(Window::Hamm, 0x01 << l2nfft)} {

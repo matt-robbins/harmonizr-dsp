@@ -11,14 +11,13 @@ public:
     SimplePitchShifter(CircularAudioBuffer &b, Window &w, float MaxT);
     ~SimplePitchShifter();
 
-    void setPeriod(float T);
-    void setRatio(float r);
     float computeOne();
     void computeReplace(float * output, int N);
     void computeAdd(float * output, int N);
-    
+    float ratio;
+    float T;
 private:
-    float ix1, ix2, T, ratio;
+    float ix1, ix2;
     float xfade_ix, xfade_n;
     float maxT;
     CircularAudioBuffer& b;

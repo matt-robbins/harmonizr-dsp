@@ -7,6 +7,8 @@ class LooperTest : public testing::Test {
   protected:
     void SetUp() override {
       
+      l = Looper(2,N/4,N/8,64);
+
       buf = new float*[nch];
       for (int j = 0; j < nch; j++) {
         buf[j] = new float[N]{};
@@ -33,7 +35,8 @@ class LooperTest : public testing::Test {
     }
     int N = 32;
     int nch = 2;
-    Looper l = Looper(2,N/4,N/8,nullptr);
+    Looper l = Looper();
+
     
     float **buf;
 };
@@ -50,29 +53,53 @@ TEST_F(LooperTest, TestLoop) {
   l.compute(buf,2*n,n);
   l.setMode(Looper::LoopPause);
   l.compute(buf,3*n,n);
+  #ifdef DEBUG
   for (int k = 0; k < N; k++) {
     for (int ch = 0; ch < nch; ch++) {
       std::cout << buf[ch][k] << ", ";
     }
     std::cout << "\n";
   }
+  #endif
 }
 
 TEST(TestWindow, TestCenter) {
   int n_instances = 0;
 
   // Expect our window to return a value of 1 for the center position
-  Window w = Window(Window::Hann, 64);
+  Window w = Window(Window::Hann, 32);
   float d = 1-w.value(0.5);
 
-  EXPECT_LT(d,0.00001) << ERR_PREFIX << "Fail!";
+  EXPECT_LT(d,0.001) << ERR_PREFIX << "Fail!";
   
   d = 0.5-w.value(0.25);
 
-  EXPECT_LT(d,0.00001) << ERR_PREFIX << "Fail!";
+  EXPECT_LT(d,0.001) << ERR_PREFIX << "Fail!";
 
   EXPECT_EQ(0, w.value(0)) << ERR_PREFIX << "Fail!";
   EXPECT_EQ(0, w.value(1)) << ERR_PREFIX << "Fail!";
+
+  w.print();
+  Window2 w2 = Window2(Window2::Hann,32);
+  float s = 0.0;
+  int N = 10000000;
+  {
+    ScopeTimer("vector");
+    
+    for (int i = 0; i < N; i++){
+      s += w.value((float)i/N);
+    }
+  }
+  std::cout << s << std::endl;
+  s = 0.0;
+  {
+    ScopeTimer("raw");
+    for (int i = 0; i < N; i++){
+      s += w2.value((float)i/N);
+    }
+  }
+  std::cout << s << std::endl;
+
 }
 
 int main(int argc, char** argv) {

@@ -6,12 +6,13 @@ class PitchMarker {
     public:
         PitchMarker(CircularAudioBuffer &b, float maxT=800);
         ~PitchMarker();
-        float findMark(float T, float frac);
+        bool findMark(float T, float frac);
         float getMark();
+        float mark;
     private:
         CircularAudioBuffer &b;
         float maxT;
-        float pix, old_pix;
+        float old_mark;
         float res;
 };
 

@@ -1,34 +1,24 @@
 #include "Looper.h"
 #include "Window.hpp"
+#include "Util.hpp"
 #include <iostream>
 
-Looper::Looper(int channels, int L_samples, int xfade_samples, Window *w=nullptr) : 
-    channels{channels}, L{L_samples}, xfn{xfade_samples}, win{w} {
+Looper::Looper(int channels, int L_samples, int xfade_samples, int wlen) : 
+    channels{channels}, L{L_samples}, xfn{xfade_samples}, win(Window::Hann,wlen) {
 
-    buffers = new float*[channels];
-    for (int k = 0; k < channels; k++){
-        buffers[k] = new float[L];
+    for (int ch = 0; ch < channels; ch++){
+        buffers.push_back(std::vector<float>(L_samples));
     }
-
+    
     ix = 0;
     n = 0;
     xf = 0;
     loop_mode = LoopStopped;
 
-    if (win == NULL) {
-        dwin = win = new Window(Window::Hann, 64);
-    }
-
-    std::cout << "created Looper with " << channels << " channels, " << L << " samples long" << "\n";
+    D(std::cout << "created Looper with " << channels << " channels, " << L << " samples long" << "\n";)
 }
 
 Looper::~Looper() {
-    for (int k = 0; k < channels; k++) {
-        delete(buffers[k]);
-    }
-    delete(buffers);
-    if (dwin != nullptr)
-        delete(dwin);
 }
 
 int Looper::compute(float * iobuf[], int offset, int count){
@@ -42,7 +32,7 @@ int Looper::compute(float * iobuf[], int offset, int count){
             float w = 0;
             if (cxf > 0){
                 cxf--;
-                w = win->value((float) cxf / (2*xfn));
+                w = win.value((float) cxf / (2*xfn));
             }
             
             switch (loop_mode)
@@ -85,7 +75,7 @@ int Looper::compute(float * iobuf[], int offset, int count){
             ix = cix; xf = cxf;
         }
     }
-
+#ifdef POOPYHEAD
     std::cout << "contents up to size = " << L << "\n";
     for (int k = 0; k < L; k++) {
         for (int ch = 0; ch < channels; ch++) {
@@ -94,6 +84,7 @@ int Looper::compute(float * iobuf[], int offset, int count){
         std::cout << "\n";
     }
     std::cout << "\n";
+#endif
 
     return count;
 }
@@ -102,7 +93,7 @@ Looper::loopMode Looper::setMode(loopMode mode) {
     loopMode old_mode = loop_mode;
     loop_mode = mode;
 
-    std::cout << "switching from " << old_mode << " to " << loop_mode << "\n";
+    D(std::cout << "switching from " << old_mode << " to " << loop_mode << "\n";)
 
     if ((old_mode == LoopRec) && (n == 0)){
         n = ix;
