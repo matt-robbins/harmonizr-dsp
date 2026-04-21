@@ -113,6 +113,7 @@ enum {
     HarmParamNvoices,
     HarmParamAuto,
     HarmParamAutoStrength,
+    HarmParamGateThresh,
     HarmParamMidi,
     HarmParamMidiLink,
     HarmParamMidiLegato,
@@ -226,7 +227,7 @@ public:
     HarmonizerDSPKernel() : 
         raw_buffer { CircularAudioBuffer(l2nfft+1) },
         filtered_buffer { CircularAudioBuffer(l2nfft+1) },
-        noise_gate { NoiseGate(-36.f,3.f,48000,12000)},
+        noise_gate { NoiseGate()},
         pitchEstimator { PitchEstimatorYIN(maxT,l2nfft,threshold,nmed) },
         pitchMarker { PitchMarker(raw_buffer,maxT) },
         window { Window(Window::Hann, nfft)},
@@ -234,7 +235,7 @@ public:
     {
         for (int i = 0; i < nvoices; i++){
             simpleVoices.push_back(SimplePitchShifter(raw_buffer,window,maxT));
-            psolaVoices.push_back(GranularSynth(20));
+            psolaVoices.push_back(GranularSynth(100));
         }
         fprintf(stderr, "bufsize = %d\n", raw_buffer.getSize());
     }
@@ -275,9 +276,9 @@ public:
     // MARK: Member Variables
 private:
 	//std::vector<FilterState> channelStates;
-    int l2nfft = 11;
+    int l2nfft = 12;
     int nfft = 1 << l2nfft;
-    int maxT = 600; // note nfft should be bigger than 3*maxT
+    int maxT = 1000; // note nfft should be bigger than 3*maxT
     int minT = 25; // corresponds to A6 (basically impossible)
     float threshold = 0.2; // for YIN pitch estimator
     int nmed = 7; // length of median filter for YIN estimator

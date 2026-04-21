@@ -14,11 +14,10 @@
 void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleRate) {
     n_channels = outChannels;
     fprintf(stderr,"**** init with %d channels! at %f Hz\n", n_channels, inSampleRate);
-    int log2nfft = 11;
-    int nfft = 1 << log2nfft;
+    int nfft = 1 << l2nfft;
     sampleRate = float(inSampleRate);
 #ifdef __APPLE__
-    fft_s = vDSP_create_fftsetup(log2nfft, 2);
+    fft_s = vDSP_create_fftsetup(l2nfft, 2);
     
     fft_in.realp = (float *) calloc(nfft, sizeof(float));
     fft_in.imagp = (float *) calloc(nfft, sizeof(float));
@@ -90,14 +89,9 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
         //fprintf(stderr, "%f\n", fd_lpf[k]);
     }
     
-//    loop_buf = (float **) calloc(2, sizeof(float *));
-//    loop_max = (int) (sampleRate * 60);
-//    for (int k = 0; k < 2; k++)
-//    {
-//        loop_buf[k] = (float *) calloc(loop_max, sizeof(float));
-//    }
-    
     looper = Looper(n_channels,60*sampleRate,(int)lrintf(0.05*sampleRate),(int)lrintf(0.05*sampleRate));
+    
+    noise_gate = NoiseGate(-40.f, 6.0f, sampleRate, 0.25);
     
     for (int k = 0; k < nvoices; k++)
     {
@@ -168,10 +162,6 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
     vDSP_fft_zopt(fft_s, &fft_in, 1, &Hann, 1, &fft_buf, 11, 1);
     #else
     #endif
-//        memcpy(cbuf, TestAudioData, 2048*sizeof(float));
-//        T = 200;
-//        get_minphase_pulse(0);
-//        exit(127);
     
     fft_mag = new float[nfft];
     fft_mag_db = new float[nfft];
@@ -371,6 +361,9 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
         case HarmParamVibrato:
             vibrato = value;
             break;
+        case HarmParamGateThresh:
+            noise_gate.set_thresh_db(value);
+            break;
         case HarmParamLoop:
             //int old_mode = loop_mode;
             looper.setMode(static_cast<Looper::loopMode>(value));
@@ -456,6 +449,8 @@ param_value_t HarmonizerDSPKernel::getParameter(param_address_t address) {
             return stereo_mode;
         case HarmParamSynth:
             return synth_enable;
+        case HarmParamGateThresh:
+            return noise_gate.get_thresh_db();
         case HarmParamVibrato:
             return vibrato;
         case HarmParamLoop:
@@ -907,7 +902,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
         fft_in.realp[k] = input[k] * window_value((float)k/(nfft));
     }
     
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, l2nfft, 1);
     // log(abs(fft))
     for (int k = 0; k < nfft; k++)
     {
@@ -920,7 +915,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
     }
 
     // cepstrum
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, l2nfft, -1);
     
     // fold and window
     fft_in.realp[0] = fft_out.realp[0]/nfft;
@@ -942,7 +937,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
     }
     
     // fft_out contains smooth envelope (fft)
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, l2nfft, 1);
     
     std::default_random_engine de(sample_count); //seed
     std::normal_distribution<float> nd(0, 1); //zero mean, 1 std
@@ -952,7 +947,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
         fft_in.realp[k] = nd(de); fft_in.imagp[k] = 0;
     }
     
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, 11, 1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, l2nfft, 1);
     // fft_out2 contains random spectrum, convolve with envelope
     for (int k = 0; k < nfft; k++)
     {
@@ -966,7 +961,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
         fft_in.imagp[k] = flt * ex * fft_out2.imagp[k]/nfft;
     }
     
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, 11, -1);
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out2, 1, &fft_buf, l2nfft, -1);
     // fft_out2 now contains noise matching original sound spectrum
     
     for (int k = 0; k < nfft; k++)
@@ -994,7 +989,7 @@ float HarmonizerDSPKernel::get_minphase_pulse(int start_ix)
     }
     
     // get impulse response (ifft)
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, -1); //inverse
+    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, l2nfft, -1); //inverse
     
     if (++synth_pulse_ix >= n_synth_pulse)
         synth_pulse_ix = 0;
