@@ -139,6 +139,7 @@ enum {
     HarmParamTuning,
     HarmParamThreshold,
     HarmParamStereo,
+    HarmParamInputChannel,
     HarmParamSynth,
     HarmParamVibrato,
     HarmParamLoop,
@@ -382,6 +383,7 @@ private:
     int auto_enable = 1;
     int midi_link = 1;
     int stereo_mode = StereoModeSplit;
+    int in_channel = 0;
     int n_auto = 4;
     int triad = -1;
     float interval_table[48];

@@ -11,7 +11,7 @@ void ButterworthFilter::compute(float * out, float * in, int n)
     }
 }
 
-inline float ButterworthFilter::compute_one(float in)
+float ButterworthFilter::compute_one(float in)
 {
     float ret = 0;
     x[ix] = in;
