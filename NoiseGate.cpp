@@ -6,12 +6,16 @@
 //
 #include "NoiseGate.hpp"
 #include <cmath>
+#include <iostream>
 
 NoiseGate::NoiseGate(float thresh_db, float hyst_db, float fs, float hold_s) :
 thresh_db{thresh_db}, hyst_db{hyst_db}, fs{fs}, hold_s{hold_s} {
-    thresh = std::pow(10.f, thresh_db / 20.f);
+    set_thresh_db(thresh_db);
+    
     hyst = std::pow(10.f, hyst_db / 20.f);
     hold_t = (int) hold_s*fs;
+    
+    std::cout << "thresh: " << thresh << "\n";
 }
 
 void NoiseGate::compute(float * out, float * in, int N) {
@@ -26,11 +30,15 @@ void NoiseGate::set_thresh_db(float thresh_db) {
 }
 
 float NoiseGate::get_thresh_db() {
-    return thresh_db;
+    return this->thresh_db;
 }
 
 float NoiseGate::get_gain() {
     return gain;
+}
+
+float NoiseGate::get_env() {
+    return env;
 }
 
 float NoiseGate::compute_one(float in) {

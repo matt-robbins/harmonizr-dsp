@@ -21,6 +21,7 @@
 #include "PitchMarker.hpp"
 #include "SimplePitchShifter.hpp"
 #include "GranularSynth.hpp"
+#include "SpectralProcessor.hpp"
 #include "Looper.h"
 #include "NoiseGate.hpp"
 
@@ -114,6 +115,7 @@ enum {
     HarmParamAuto,
     HarmParamAutoStrength,
     HarmParamGateThresh,
+    HarmParamAlgorithm,
     HarmParamMidi,
     HarmParamMidiLink,
     HarmParamMidiLegato,
@@ -126,9 +128,12 @@ enum {
     HarmParamMidiNvoiceCcRange,
     HarmParamMidiInvCC,
     HarmParamMidiInvCcRange,
+    HarmParamMidiFreezeCC,
     HarmParamMidiPC,
     HarmParamMidiHarmOut,
     HarmParamMidiMelOut,
+    HarmParamMidiPedalFcn,
+    HarmParamMidiPedalInv,
     HarmParamTriad,
     HarmParamBypass,
     HarmParamDouble,
@@ -142,6 +147,7 @@ enum {
     HarmParamInputChannel,
     HarmParamSynth,
     HarmParamVibrato,
+    HarmParamFreeze,
     HarmParamLoop,
     HarmParamInterval
 };
@@ -152,6 +158,12 @@ enum loopMode {
     LoopPlay,
     LoopPlayRec,
     LoopPause
+};
+
+enum pedalMode {
+    PedalFreeze=0,
+    PedalNotes,
+    PedalBoth
 };
 
 enum {
@@ -170,6 +182,11 @@ enum {
     StereoModeNormal=0,
     StereoModeMono,
     StereoModeSplit
+};
+
+enum {
+    AlgorithmPSOLA=0,
+    AlgorithmResample
 };
 
 
@@ -302,6 +319,8 @@ private:
     std::vector<SimplePitchShifter> simpleVoices;
     std::vector<GranularSynth> psolaVoices;
     
+    std::vector<SpectralProcessor> freezers;
+    
     Looper looper;
     
     float * in_filt;
@@ -353,6 +372,9 @@ private:
     float speed = 1.0;
     float corr_strength = 0.5;
     float vibrato = 0.;
+    
+    float gate_thresh = -40.f;
+    
     int autotune = 1;
     int bypass = 0;
     
@@ -365,6 +387,8 @@ private:
     int midi_enable = 1;
     int synth_enable = 0;
     
+    int algorithm = AlgorithmPSOLA;
+    
     int midi_keycenter_cc = 16;
     int midi_keycenter_cc_offset = 1;
     int midi_keyquality_cc = 17;
@@ -373,6 +397,7 @@ private:
     int midi_nvoices_range = 0;
     int midi_inversion_cc = 19;
     int midi_inversion_range = 0;
+    int midi_freeze_cc = 20;
     int midi_program_change_enable = 1;
     int midi_transmit_harmony = 0;
     int midi_transmit_melody = 0;
@@ -382,6 +407,8 @@ private:
     int midi_pedal = 0;
     int auto_enable = 1;
     int midi_link = 1;
+    int midi_pedal_fcn = 0;
+    int midi_pedal_inv = 0;
     int stereo_mode = StereoModeSplit;
     int in_channel = 0;
     int n_auto = 4;

@@ -91,7 +91,12 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
     
     looper = Looper(n_channels,60*sampleRate,(int)lrintf(0.05*sampleRate),(int)lrintf(0.05*sampleRate));
     
-    noise_gate = NoiseGate(-40.f, 6.0f, sampleRate, 0.25);
+    noise_gate = NoiseGate(gate_thresh, 6.0f, sampleRate, 0.25);
+    
+    freezers.reserve(n_channels);
+    for (int k = 0; k < n_channels; k++) {
+        freezers.emplace_back(14,5);
+    }
     
     for (int k = 0; k < nvoices; k++)
     {
@@ -222,6 +227,8 @@ void HarmonizerDSPKernel::fini() {
     
     free(in_buffers);
     free(out_buffers);
+    
+    freezers.clear();
 }
 
 void HarmonizerDSPKernel::reset() {
@@ -314,6 +321,9 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
         case HarmParamMidiInvCcRange:
             midi_inversion_range = (int) clamp(value,0.f,127.f);
             break;
+        case HarmParamMidiFreezeCC:
+            midi_freeze_cc = (int) clamp(value,0.f,127.f);
+            break;
         case HarmParamMidiPC:
             midi_program_change_enable = (int) clamp(value,0.f,1.f);
             break;
@@ -325,6 +335,12 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             break;
         case HarmParamMidiLegato:
             midi_legato = (int) clamp(value, 0.f, 1.f);
+            break;
+        case HarmParamMidiPedalFcn:
+            midi_pedal_fcn = (int) clamp(value, 0.f, 2.f);
+            break;
+        case HarmParamMidiPedalInv:
+            midi_pedal_inv = (int) clamp(value, 0.f, 1.f);
             break;
         case HarmParamTriad:
             triad = (int) clamp(value,-1.f,30.f);
@@ -358,11 +374,19 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             synth_enable = value;
             fprintf(stderr, "synth_enable = %d\n", synth_enable);
             break;
+        case HarmParamAlgorithm:
+            algorithm = value;
+            break;
         case HarmParamVibrato:
             vibrato = value;
             break;
+        case HarmParamFreeze:
+            for (int k = 0; k < n_channels; k++)
+                freezers[k].freeze((bool) (value > 0));
+            break;
         case HarmParamGateThresh:
-            noise_gate.set_thresh_db(value);
+            gate_thresh = value;
+            noise_gate.set_thresh_db(gate_thresh);
             break;
         case HarmParamLoop:
             //int old_mode = loop_mode;
@@ -423,12 +447,18 @@ param_value_t HarmonizerDSPKernel::getParameter(param_address_t address) {
             return (float) midi_inversion_cc;
         case HarmParamMidiInvCcRange:
             return (float) midi_inversion_range;
+        case HarmParamMidiFreezeCC:
+            return (float) midi_freeze_cc;
         case HarmParamMidiPC:
             return (float) midi_program_change_enable;
         case HarmParamMidiMelOut:
             return (float) midi_transmit_melody;
         case HarmParamMidiHarmOut:
             return (float) midi_transmit_harmony;
+        case HarmParamMidiPedalFcn:
+            return (float) midi_pedal_fcn;
+        case HarmParamMidiPedalInv:
+            return (float) midi_pedal_inv;
         case HarmParamTriad:
             return (float) triad;
         case HarmParamBypass:
@@ -449,12 +479,16 @@ param_value_t HarmonizerDSPKernel::getParameter(param_address_t address) {
             return stereo_mode;
         case HarmParamSynth:
             return synth_enable;
+        case HarmParamAlgorithm:
+            return algorithm;
         case HarmParamGateThresh:
             return noise_gate.get_thresh_db();
         case HarmParamVibrato:
             return vibrato;
         case HarmParamLoop:
             return (float) loop_mode;
+        case HarmParamFreeze:
+            return freezers[0].frozen();
         case HarmParamInterval:
         default:
             int addr = (int) address - (int) HarmParamInterval;
@@ -626,8 +660,8 @@ void HarmonizerDSPKernel::handleMIDIEvent(midi_event_t const& midiEvent) {
     uint8_t channel = midiEvent.data[0] & 0x0F; // works in omni mode.
     static int key_quality = 0;
     
-    if (channel != 0)
-        return;
+//    if (channel != 0)
+//        return;
     
     switch (status) {
         case 0x80 : { // note off
@@ -639,6 +673,7 @@ void HarmonizerDSPKernel::handleMIDIEvent(midi_event_t const& midiEvent) {
         case 0x90 : { // note on
             uint8_t note = midiEvent.data[1];
             uint8_t veloc = midiEvent.data[2];
+            D(std::cout << "note #" << (int) note << ": " << (int) veloc << "\n");
             if (note > 127 || veloc > 127) break;
             if (veloc == 0)
                 remnote((int)note);
@@ -649,14 +684,14 @@ void HarmonizerDSPKernel::handleMIDIEvent(midi_event_t const& midiEvent) {
         case 0xB0 : { // control
             uint8_t num = midiEvent.data[1];
             uint8_t val = midiEvent.data[2];
-            //fprintf(stderr, "cc #%d: %d\n", num, val);
+            D(std::cout << "cc #" << num << ": " << val << "\n");
             if (num == 11)
             {
                 midigain = (float) val / 64.0;
             }
             if (num == 64)
             {
-                if ((float) (val > 0))
+                if ((val > 0) ^ midi_pedal_inv)
                 {
                     pedal_down();
                 }
@@ -695,6 +730,11 @@ void HarmonizerDSPKernel::handleMIDIEvent(midi_event_t const& midiEvent) {
                 setParameter(HarmParamInversion, (val * n_auto) / 127);
                 //inversion = 1 + (val * (n_auto-1)) / 127;
             }
+            if (num == midi_freeze_cc)
+            {
+                fprintf(stdout, "freeze? %d\n", val);
+                setParameter(HarmParamFreeze, val == 0 ? 0.0 : 1.0);
+            }
             if (num >= 20 && num <= 31)
             {
                 
@@ -720,12 +760,12 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
     n_output_events = 0;
     
     float* in  = in_buffers[0] + bufferOffset;
-    float* out = out_buffers[0] + bufferOffset;
-    float* out2 = out;
+    float* out[2] = {out_buffers[0] + bufferOffset, out_buffers[0] + bufferOffset};
+    //float* out2 = out;
     
     if (channelCount > 1)
     {
-        out2 = out_buffers[1] + bufferOffset;
+        out[1] = out_buffers[1] + bufferOffset;
     }
     
     int n_computed = 0;
@@ -739,13 +779,13 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
                 
         if (bypass)
         {
-            out[frameIndex] = in[frameIndex] / 2;
-            out2[frameIndex] = out[frameIndex];
+            out[0][frameIndex] = in[frameIndex] / 2;
+            out[1][frameIndex] = out[0][frameIndex];
             continue;
         }
         else
         {
-            out[frameIndex] = out2[frameIndex] = 0;
+            out[0][frameIndex] = out[1][frameIndex] = 0;
         }
         
         if (--rcnt == 0)
@@ -783,24 +823,36 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
             }
                         
             int nn = frameIndex - n_computed;
-            psola(out+n_computed, out2+n_computed, nn);
+            psola(out[0]+n_computed, out[1]+n_computed, nn);
             n_computed += nn;
         }
         
         float at = simpleVoices[0].computeOne();
         
         float x = autotune ? at : in[frameIndex];
-        out[frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
+        
+        out[0][frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
         if (stereo_mode != StereoModeSplit){
-            out2[frameIndex] = out[frameIndex];
+            out[1][frameIndex] = out[0][frameIndex];
         }
+        
     }
     
     int nn = frameCount - n_computed;
-    psola(out+n_computed, out2+n_computed, nn);
+    psola(out[0]+n_computed, out[1]+n_computed, nn);
     
     filter.clear_bad();
             
+    // compute freezing stuff
+    for (int ch = 0; ch < n_channels; ch++) {
+        for (int frameIndex = bufferOffset; frameIndex < frameCount + bufferOffset; ++frameIndex)
+        {
+            float y = freezers[ch].process_frame(out_buffers[ch][frameIndex]);
+            out_buffers[ch][frameIndex] += y;
+        }
+    }
+    
+    
     // compute looping stuff
     
     looper.compute(out_buffers, bufferOffset, frameCount);
@@ -867,9 +919,12 @@ void HarmonizerDSPKernel::psola(float *out, float *out2, int n)
             if (vix >= n_auto && !midi_enable)
                 continue;
             
-            float u = psolaVoices[vix].synthesizeOne() * harmgain * voices[vix].gain;
-            //float u = simpleVoices[vix].computeOne() * harmgain * voices[vix].gain;
+//            float u = (algorithm == AlgorithmPSOLA) ? psolaVoices[vix].synthesizeOne() :
+//                simpleVoices[vix].computeOne();
             
+            volatile float u = psolaVoices[vix].synthesizeOne();
+            
+            u *= harmgain * voices[vix].gain;
             switch (stereo_mode)
             {
                 case StereoModeNormal:
@@ -1191,19 +1246,35 @@ void HarmonizerDSPKernel::remnote(int note)
 
 void HarmonizerDSPKernel::pedal_down()
 {
-    midi_pedal = 1;
+    switch (midi_pedal_fcn) {
+        case PedalFreeze:
+            for (SpectralProcessor& freezer : freezers)
+                freezer.freeze(true);
+            break;
+        case PedalNotes:
+            midi_pedal = 1;
+    }
 }
     
 void HarmonizerDSPKernel::pedal_up()
 {
-    midi_pedal = 0;
-    for (int k = n_auto; k < nvoices; k++)
-    {
-        if (!keys_down[voices[k].midinote])
-        {
-            voices[k].lastnote = voices[k].midinote;
-            voices[k].midinote = -1;
-        }
+    switch (midi_pedal_fcn) {
+        case PedalFreeze:
+            for (SpectralProcessor& freezer : freezers)
+                freezer.freeze(false);
+            break;
+        case PedalNotes:
+            midi_pedal = 0;
+
+            for (int k = n_auto; k < nvoices; k++)
+            {
+                if (!keys_down[voices[k].midinote])
+                {
+                    voices[k].lastnote = voices[k].midinote;
+                    voices[k].midinote = -1;
+                }
+            }
+            break;
     }
 }
 
@@ -1609,15 +1680,15 @@ inline float HarmonizerDSPKernel::window_value(float f)
 
 
 // :MARK utility Functions
-inline float cubic (float *v, float a)
-{
-    float b, c;
-    
-    b = 1 - a;
-    c = a * b;
-    return (1.0f + 1.5f * c) * (v[1] * b + v[2] * a)
-    - 0.5f * c * (v[0] * b + v[1] + v[2] + v[3] * a);
-}
+//inline float cubic (float *v, float a)
+//{
+//    float b, c;
+//    
+//    b = 1 - a;
+//    c = a * b;
+//    return (1.0f + 1.5f * c) * (v[1] * b + v[2] * a)
+//    - 0.5f * c * (v[0] * b + v[1] + v[2] + v[3] * a);
+//}
 
 float quadratic_peak(float *pv, float *v, int ix)
 {

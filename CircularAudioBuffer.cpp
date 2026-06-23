@@ -105,12 +105,13 @@ float *CircularAudioBuffer::getContiguous(int offset) {
 
 // return a raw pointer to a congiguous segment of the buffer,
 // guaranteed to be N long. Offset is relative.
-float *CircularAudioBuffer::getContiguousRelative(int offset) {
-    offset += ix;
-    if (offset > 0) offset -= N;
-    if (offset < -N) offset += N;
+float *CircularAudioBuffer::getContiguousRelative(int relix) {
+    if (relix < 1 || relix > N) {
+        std::cerr << "relix = " << relix << "\n";
+        throw std::invalid_argument("relative index must be less than N samples behind");
+    }
     
-    return data + offset;
+    return data + ix - relix;
 }
 
 int CircularAudioBuffer::pushValue(float val){

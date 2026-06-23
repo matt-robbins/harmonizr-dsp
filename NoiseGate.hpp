@@ -26,6 +26,7 @@ public:
     void compute(float * out, float * in, int n);
     float compute_one(float in);
     float get_gain();
+    float get_env();
     void set_thresh_db(float thresh_db);
     float get_thresh_db();
     
@@ -41,7 +42,7 @@ private:
     float hold_s = 1.f;
     float fs = 48000;
     int hold_t = 0;
-    gateState state = Open;
+    gateState state = Closed;
     
     IirTracker env_tracker = IirTracker(0.999);
     IirTracker gain_tracker = IirTracker(0.999);

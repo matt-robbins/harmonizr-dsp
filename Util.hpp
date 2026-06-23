@@ -9,7 +9,6 @@
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
 #endif
-
 #ifdef DEBUG
 #  define D(x) x
 #else
@@ -85,7 +84,6 @@ inline float median_idx(float *data, int n) {
     }
 
     if (sum == 0) {
-        D(std::cout << "sum==0!" << std::endl;)
         return (float)n/2;
     }
     // linearly interpolate
@@ -97,6 +95,10 @@ inline float median_idx(float *data, int n) {
 inline void fft_alloc(DSPSplitComplex &p, int nfft) {
     p.realp = (float *) calloc(nfft, sizeof(float));
     p.imagp = (float *) calloc(nfft, sizeof(float));
+    
+    if (p.realp == 0 || p.imagp == 0) {
+        std::cout << "Memory allocation failure!\n";
+    }
 }
 
 inline void fft_free(DSPSplitComplex &p) {
