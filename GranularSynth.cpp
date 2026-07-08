@@ -6,9 +6,15 @@
 GranularSynth::GranularSynth(int table_size) : 
     win(Window::Hann,64), N{table_size} {
     // std::cout << "grain 1 size = " << grains[1].size;
-
+        gainTracker.setT(1000);
+        ratioTracker.setT(1000);
     grains.resize(table_size);
 }
+
+//GranularSynth::GranularSynth() :
+//win(Window::Hann, 64), N{100} {
+//    grains.resize(N);
+//}
 
 void GranularSynth::newGrain(float *data, float offset, float start_ix) {
     int found_grain = 0;
@@ -34,7 +40,7 @@ void GranularSynth::newGrain(float *data, float offset, float start_ix) {
     }
 
     if (!found_grain) {
-        std::cerr << "*** failed to find grain" << std::endl;
+        miss_count++;
     }
 
     for (int k = maxgrain; k > 0; k--){
@@ -43,6 +49,26 @@ void GranularSynth::newGrain(float *data, float offset, float start_ix) {
         
         maxgrain = k;
     }
+}
+
+float GranularSynth::setGain(float gain) {
+    this->gain = gain;
+    return gain;
+}
+
+float GranularSynth::setRatio(float ratio) {
+    this->ratio = ratio;
+    return ratio;
+}
+
+float GranularSynth::setT(float t) {
+    this->T = t;
+    return T;
+}
+
+float GranularSynth::setPan(float pan) {
+    this->pan = pan;
+    return pan;
 }
 
 void GranularSynth::setGrainSource(float *data, float offset, float length) {
@@ -75,21 +101,23 @@ float GranularSynth::synthesizeOne() {
         newGrain(this->source,offset,-nextgrain);
         nextgrain += T + vib_a*sinf(theta);
     }
+    float smooth_gain = gainTracker.compute(gain);
+    float smooth_ratio = ratioTracker.compute(ratio);
     
     float sum = 0.0;
     for (int ix = 0; ix <= maxgrain; ix++) // look for active grains
     {         
         // if this grain has been "triggered", it's size is > 0  
         if (grains[ix].size <= 0) continue;
-        float u = valueAtIndexInterp(grains[ix].data, grains[ix].ix + grains[ix].offset) * gain;
-        float f = grains[ix].win_ix/(grains[ix].size-1);   
+        float u = valueAtIndexInterp(grains[ix].data, grains[ix].ix + grains[ix].offset) * smooth_gain;
+        float f = grains[ix].win_ix/(grains[ix].size-1);
         float w = win_enable ? win.value(f) : 1.0;  
         u *= w;
         //std::cerr << u << std::endl;     
 
         sum += u;
-        grains[ix].ix += ratio;
-        grains[ix].win_ix += ratio;
+        grains[ix].ix += smooth_ratio;
+        grains[ix].win_ix += smooth_ratio;
         
         if (grains[ix].ix >= grains[ix].size){
             grains[ix].size = -1; // declare this grain open

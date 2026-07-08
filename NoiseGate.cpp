@@ -70,11 +70,3 @@ float NoiseGate::compute_one(float in) {
     return in * gain;
 }
 
-float IirTracker::compute(float in) {
-    
-    float out = y[0]*2*p - y[1]*p*p + in*(1 - 2*p + p*p);
-    
-    y[1] = y[0]; y[0] = out;
-    
-    return out;
-}

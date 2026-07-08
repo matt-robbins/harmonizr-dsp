@@ -6,8 +6,8 @@
 
 Window::Window(winType type, int table_size) : type{type}, N{table_size} {
     table.resize(N+2*offset);
-    float a0 = (type == Window::Hann) ? 0.5 : 0.54;
-    float a1 = 1.0 - a0;
+    a0 = (type == Window::Hann) ? 0.5 : 0.54;
+    a1 = 1.0 - a0;
     
     for (int k = 0; k < N; k++){
         table [offset + k] = a0 - a1 * cosf (2 * M_PI * k / (N-1));
@@ -16,6 +16,10 @@ Window::Window(winType type, int table_size) : type{type}, N{table_size} {
 
 float Window::operator[](int ix){
     return table[ix+offset];
+}
+
+float *Window::rawdata() {
+    return table.data() + offset;
 }
 
 void Window::print() {
@@ -29,10 +33,12 @@ float Window::value(float f) {
         return 0.0;
     }
     
-    float wi = offset + (N-1) * f;
-    int i = (int) wi;
-    float w = cubic (table.begin() + i - 1, wi - i);    
-    return w;
+    return a0 - a1 * cosf(2*M_PI*f);
+    
+//    float wi = offset + (N-1) * f;
+//    int i = (int) wi;
+//    float w = cubic (table.begin() + i - 1, wi - i);    
+//    return w;
 }
 
 void Window::apply(float *data, int N) {

@@ -2,6 +2,7 @@
 #define _gransynth_
 #include "CircularAudioBuffer.hpp"
 #include "Window.hpp"
+#include "Util.hpp"
 #include <vector>
 
 struct Grain
@@ -15,8 +16,7 @@ struct Grain
 
 class GranularSynth {
 public:
-    GranularSynth(int table_size);
-    //~GranularSynth();
+    GranularSynth(int table_size=100);
 
     void newGrain(float * data, float offset, float start_ix);
     float synthesizeOne();
@@ -25,29 +25,47 @@ public:
     float* getGrainSource();
     float setVibratoRate(float freq);
     float setVibratoAmpl(float amp);
+    float setGain(float gain);
+    float setRatio(float ratio);
+    float setPan(float pan);
+    float setT(float t);
+    float setFs(float fs) {
+        this->fs = fs;
+        return this->fs;
+    }
+    
     bool enable = true;
     bool win_enable = true;
     
     float T = 0;
-    float gain = 1.0;
-    float ratio = 1.0;
+
     
 private:
-
     int N;
     std::vector<Grain> grains;
+    IirTracker gainTracker;
+    IirTracker ratioTracker;
+    Window win;
+    
     int maxgrain = 0;
     float nextgrain = 0.0;
     float * source = nullptr;
     float length = 0.0;
     float offset = 0.0;
-    float fs;
     
     float vib_f = 0.f;
     float vib_a = 0.f;
     float theta = 0.f;
+    
+    float gain = 1.0;
+    float ratio = 1.0;
+    float pan = 0.0;
 
-    Window win;
+    unsigned int miss_count = 0;
+    
+protected:
+    float fs = 44100.f;
+    
 };
 
 #endif

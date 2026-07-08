@@ -71,7 +71,7 @@ class SpectralProcessor {
 public:
     SpectralProcessor(int p2nfft, int olap) : mP2nfft{p2nfft}, mNfft{0x01 << p2nfft}, b{p2nfft+1}, ob{olap, 0x01 << (p2nfft)}, w{Window::Hann,1<<p2nfft}, rng{std::random_device{}()}, dist{0.0, M_PI*2.f}
     {
-        fft_s = vDSP_create_fftsetup(mP2nfft, 2);
+        fft_s = vDSP_create_fftsetup(mP2nfft, FFT_RADIX2);
 
         fft_alloc(fft_x, mNfft);
         
@@ -81,7 +81,7 @@ public:
         mLap = olap;
     }
     SpectralProcessor(const SpectralProcessor& other) : mP2nfft{other.mP2nfft}, mNfft{other.mNfft}, b{other.mP2nfft+1}, ob{other.mLap, other.mNfft}, w{Window::Hann, other.mNfft}, rng{std::random_device{}()}, dist{0.0, M_PI*2.f} {
-        fft_s = vDSP_create_fftsetup(mP2nfft, 2);
+        fft_s = vDSP_create_fftsetup(mP2nfft, FFT_RADIX2);
 
         fft_alloc(fft_x, mNfft);
         

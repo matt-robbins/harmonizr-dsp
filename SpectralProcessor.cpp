@@ -29,7 +29,9 @@ void SpectralProcessor::update_spectrum() {
     // store spectrum
 
     mag_spec[0] = fft_x.realp[0];
-    mag_spec[mNfft/2] = fft_x.realp[1];
+    mag_spec[mNfft/2] = fft_x.imagp[0];
+    
+    //vDSP_zvmags(&fft_x, 1, mag_spec, 1, mNfft/2);
     
     for (int k = 1; k < mNfft/2; k++)
     {
@@ -50,19 +52,23 @@ void SpectralProcessor::update_spectrum() {
 
 void SpectralProcessor::generate() {
     
-    // just set dc and nyquist to zero.
+    int N = mNfft/2;
+
+    // generate random phase spectrum
+    for (int k = 1; k < N; k++) {
+        ph_spec[k] = dist(rng);
+    }
+    
+    // get real and imaginary parts via vectorized sinf and cosf
+    vvsincosf(fft_x.imagp, fft_x.realp, ph_spec, &N);
+    
+    // multiply both by the magnitude spectrum
+    vDSP_vmul(fft_x.realp, 1, mag_spec, 1, fft_x.realp, 1, N);
+    vDSP_vmul(fft_x.imagp, 1, mag_spec, 1, fft_x.imagp, 1, N);
+    
+    // set dc and nyquist to zero.
     fft_x.realp[0] = 0;
     fft_x.imagp[0] = 0;
-    
-    // keep magnitude spectrum, inject random phase, keep it conjugate symmetric
-    for (int k = 1; k < mNfft/2; k++)
-    {
-        // random phase
-        float phi = dist(rng);
-        
-        fft_x.realp[k] = mag_spec[k] * cosf(phi);
-        fft_x.imagp[k] = mag_spec[k] * sinf(phi);
-    }
     
     // inverse transform
     vDSP_fft_zrip(fft_s, &fft_x, 1, mP2nfft, FFT_INVERSE);

@@ -12,12 +12,14 @@ public:
     float operator[](int ix);
     float value(float position); // compute window value
     void apply(float * data, int N);
+    float *rawdata();
     void print();
     
 private:
     winType type;
     int N;
     int offset = 2;
+    float a0, a1;
     std::vector<float> table;
 };
 

@@ -5,14 +5,7 @@
 //  Created by Matthew E Robbins on 4/1/26.
 //
 
-class IirTracker {
-public:
-    IirTracker(float p=0.999f) : p{p} { };
-    float compute(float in);
-private:
-    float y[2] = {0.f, 0.f};
-    float p;
-};
+#include "Util.hpp"
 
 class NoiseGate {
 public:
@@ -46,7 +39,6 @@ private:
     
     IirTracker env_tracker = IirTracker(0.999);
     IirTracker gain_tracker = IirTracker(0.999);
-    
 };
 
 

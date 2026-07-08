@@ -24,6 +24,7 @@
 #include "SpectralProcessor.hpp"
 #include "Looper.h"
 #include "NoiseGate.hpp"
+#include "Harmonizer.hpp"
 
 #ifdef __APPLE__
 #import "DSPKernel.hpp"
@@ -56,49 +57,14 @@ T clamp(T input, T low, T high) {
 
 #endif //#ifdef APPLE
 
-// Utility functions
-float linear (float *v, float a);
-float linear_interp(float *v, float ix);
-inline float cubic (float *v, float a);
-float cubic_interp(float *v, float ix);
-float quadratic_peak(float *pv, float *v, int ix);
-
-template <typename T> int sgn(T val) {
-    return (T(0) < val) - (val < T(0));
-}
-
 #define N_AUTO 4
 #define N_MIDI_BUF 100
 
-typedef struct grain_s
-{
-    float size;
-    float start;
-    float ix;
-    float ratio;
-    float gain;
-    float pan;
-    int vix;
-    int synth_ix;
-} grain_t;
-
 typedef struct voice_s
 {
-    float error;
     float ratio;
     float target_ratio;
-    float formant_ratio;
-    float nextgrain;
     float pan;
-    float ix1;
-    float ix2;
-    float gain;
-    float target_gain;
-    float vibrato_rate;
-    float vibrato_amp;
-    float vib_phase;
-    int xfade_ix;
-    int xfade_dur;
     int midinote;
     float midinote_;
     int midivel;
@@ -189,24 +155,6 @@ enum {
     AlgorithmResample
 };
 
-
-static inline double squared(double x) {
-    return x * x;
-}
-
-static inline float inc_to_target(float value, float target, float c, float maxrate_up, float maxrate_down)
-{
-    float diff = c * (target - value);
-    int sign = sgn(diff);
-    if (sign > 0 && diff > maxrate_up)
-        diff = maxrate_up;
-    
-    else if (sign < 0 && diff < maxrate_down)
-        diff = maxrate_down;
-    
-    return value + diff;
-}
-
 /*
 	HarmonizerDSPKernel
 	Performs our filter signal processing.
@@ -224,18 +172,7 @@ private:
     inline float window_value(float f);
     void psola(float *out, float *out2, int n);
     
-    void update_voices (void);
-    
-    inline float measure_snr(float in);
-    float pitch_resample();
-    
-   // float estimate_pitch(int start_ix);
-   // float estimate_pitch2(int start_ix);
-    float get_minphase_pulse(int start_ix);
-    float get_model(int start_ix);
-    
     void analyze_harmony(void);
-    
     void send_note_on(int nn, int vel);
     void send_note_off(int nn, int vel);
     
@@ -253,7 +190,7 @@ public:
     {
         for (int i = 0; i < nvoices; i++){
             simpleVoices.push_back(SimplePitchShifter(raw_buffer,window,maxT));
-            psolaVoices.push_back(GranularSynth(100));
+            psolaVoices.push_back(PsolaVoice());
         }
         fprintf(stderr, "bufsize = %d\n", raw_buffer.getSize());
     }
@@ -275,8 +212,16 @@ public:
     
     void addnote(int note, int vel);
     void remnote(int note);
+    void update_midi();
+    void calculate_voices();
+    void update_voices (void);
+    void set_voiced(bool voiced);
+    void list_intervals();
+
     void pedal_down();
     void pedal_up();
+    
+    void set_T(float t);
     
 #ifdef __APPLE__
 
@@ -293,21 +238,12 @@ public:
     
     // MARK: Member Variables
 private:
-	//std::vector<FilterState> channelStates;
     int l2nfft = 12;
     int nfft = 1 << l2nfft;
     int maxT = 1000; // note nfft should be bigger than 3*maxT
     int minT = 25; // corresponds to A6 (basically impossible)
     float threshold = 0.2; // for YIN pitch estimator
     int nmed = 7; // length of median filter for YIN estimator
-    
-#ifdef __APPLE__
-    FFTSetup fft_s;
-    DSPSplitComplex fft_in, fft_out, fft_out2, fft_buf, A_model, Hann, spec_env;
-#else
-    kiss_fft_cfg fft_s, ifft_s;
-    kiss_fft_cpx *fft_in, *fft_out, *fft_out2, *fft_buf, *A_model, *Hann, *spec_env;
-#endif
         
     ButterworthFilter filter;
     CircularAudioBuffer raw_buffer;
@@ -317,46 +253,17 @@ private:
     PitchEstimatorYIN pitchEstimator;
     PitchMarker pitchMarker;
     std::vector<SimplePitchShifter> simpleVoices;
-    std::vector<GranularSynth> psolaVoices;
+    std::vector<PsolaVoice> psolaVoices;
     
     std::vector<SpectralProcessor> freezers;
     
     Looper looper;
     
-    float * in_filt;
-    float * cbuf;
-    float * fbuf;
-    float * cmdf;
-    float * snr_buf;
-    float * fd_lpf;
-    float * fft_mag;
-    float * fft_mag_db;
-    float * lms_h;
-    int lms_n = 10;
-    float ** synth_pulse;
-    float ** loop_buf;
-    int loop_max;
-    int loop_n = 0;
-    int loop_ix = 0;
-    int loop_xf = 0;
-    int loop_xfn = 500;
-    int n_synth_pulse = 20;
-    int synth_pulse_ix = 0;
-    int ncbuf = 4096;
-    int n_snr = 400;
-    int snr_ix = 0;
-    int cix = 0;
-    int rix = 0;
-    int maxgrain = 0;
+    int nvoices = 16;
     
-    float mean_sq = 0;
-    float nse_floor = 1.0;
     float rcnt = 256;
     float T = 400;
-    int nAmpl = 50;
-    float Abuf[50];
     
-    int cmask = ncbuf - 1;
     int voiced = 0;
     float noise_pct = 0.0;
     float sampleRate = 44100.0;
@@ -378,11 +285,7 @@ private:
     int autotune = 1;
     int bypass = 0;
     
-    int nvoices = 16;
-    int voice_ix = 3;
-    
     int chord_quality = 0;
-    voice_t * voices;
     int inversion = 2;
     int midi_enable = 1;
     int synth_enable = 0;
@@ -403,9 +306,7 @@ private:
     int midi_transmit_melody = 0;
         
     int midi_ignore_velocity = 0;
-    int midi_legato = 0;
     int midi_pedal = 0;
-    int auto_enable = 1;
     int midi_link = 1;
     int midi_pedal_fcn = 0;
     int midi_pedal_inv = 0;
@@ -420,24 +321,14 @@ private:
     chord_ratio_t minor_chord_table[12];
     chord_ratio_t blues_chord_table[12];
     
-    int ngrains;
-    int grain_ix = 0;
-    grain_t * grains;
-    
-    int graintablesize = maxT;
-    float * grain_window;
-    
     unsigned int sample_count = 0;
     unsigned int midi_changed_sample_num = 0;
-    unsigned int midi_changed = 1;
 
     int preset_ix = 0;
-    int voice_notes_old[N_AUTO];
     
 public:
-    int voice_notes[N_AUTO];
-    float note_number = -1.0;
-    float midi_note_number;
+    int ui_voice_notes[N_AUTO];
+    int midi_note_number = -1;
     int keys_down[128];
     int root_key = 0;
     int patch_number = 0;

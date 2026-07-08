@@ -50,12 +50,17 @@ float PitchEstimatorSHS::estimate(CircularAudioBuffer &b) {
     memset(fft_in.realp, 0, nfft * sizeof(float));
     memset(fft_in.imagp, 0, nfft * sizeof(float));
     
-    b.copyRange(nfft, nfft, fft_in.realp);
-    for (int i = 0; i < nfft; i++){
-        fft_in.realp[i] *= w[i];
+    float * buf = b.getContiguousRelative(nfft);
+
+    // note: we can't use this cause we need to window!
+    //vDSP_ctoz(reinterpret_cast<DSPComplex *>(buf), 2, &fft_x, 1, mNfft/2);
+
+    for (int k = 0; k < l2nfft/2; k++) {
+        fft_in.realp[k] = buf[2*k] * w[2*k];
+        fft_in.imagp[k] = buf[2*k+1] * w[2*k+1];
     }
     
-    vDSP_fft_zopt(fft_s, &fft_in, 1, &fft_out, 1, &fft_buf, 11, 1);
+    vDSP_fft_zrip(fft_s, &fft_in, 1, l2nfft, FFT_FORWARD);
 
     // compute amplitude
     for (int i = 0; i < nspec - 1; i++){
@@ -74,7 +79,7 @@ float PitchEstimatorSHS::estimate(CircularAudioBuffer &b) {
         linpeaks[i] = linspec[i]*linpeaks[i];
     }
     // smoothing filter
-    for (int i = 0; i < nspec; i++) {
+    for (int i = 1; i < nspec - 1; i++) {
         linspec[i] = 0.25*linpeaks[i-1] + 0.5*linpeaks[i] + 0.25*linpeaks[i+1];
     }
 

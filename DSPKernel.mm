@@ -13,7 +13,7 @@ void DSPKernel::handleOneEvent(AURenderEvent const *event) {
     AUMIDIEvent e;
     
 	switch (event->head.eventType) {
-		case AURenderEventParameter:
+		case AURenderEventParameter:
 		case AURenderEventParameterRamp: {
 			AUParameterEvent const& paramEvent = event->parameter;
 			
