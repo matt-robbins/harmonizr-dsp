@@ -16,7 +16,7 @@ struct Grain
 
 class GranularSynth {
 public:
-    GranularSynth(int table_size=100);
+    GranularSynth(int table_size=100, float fs=44100.f);
 
     void newGrain(float * data, float offset, float start_ix);
     float synthesizeOne();

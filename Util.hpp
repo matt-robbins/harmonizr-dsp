@@ -224,10 +224,15 @@ private:
     float m_current = 0.0;
 };
 
-inline float midi_note_to_T(float nn, float fs) {
+inline float midi_note_to_T(float nn, float fs, float base=440.f, float tet=12.f) {
     float f = 440.f * powf(2.f, (nn - 69.f)/12.f);
     float T = fs/f;
     return T;
+}
+
+static constexpr float MIDI_A4 = 69.0;
+inline float T_to_midi_note(float T, float Fs, float base=440.f, float tet=12.f) {
+    return MIDI_A4 + log2f (Fs / (T * base)) * tet;
 }
 
 #endif

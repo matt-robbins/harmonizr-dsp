@@ -1,33 +1,47 @@
 #include "Harmonizer.hpp"
+#include <span>
 
-void Harmonizer::compute(float *in[], float *out[], int nch, int N){
+stereoSample Harmonizer::compute_one(float in) {
+    buffer.pushValue(in);
+    fbuffer.pushValue(filter.compute_one(in));
+    
+    if (m_est_counter.update())
+    {
+        float p = pEst.estimate(fbuffer);
+        m_voiced = p > 0.0f;
+        if (m_voiced == true) {
+            T = p;
+        }
+        
+        updateVoices();
+    }
+    
+    if (pMark.findMark(T,m_voiced)) {
+        for (PsolaVoice &voice : voices) {
+            voice.setGrainSource(buffer.getContiguous(0), pMark.mark-T,2*T);
+            voice.setGain(m_voiced ? 1.0 : 0.0);
+        }
+    }
+    stereoSample u = {0.f, 0.f};
+    for (PsolaVoice &voice : voices) {
+         u += voice.render();
+    }
+    
+    return u;
+}
+
+void Harmonizer::compute(float *in, float *out[], int nch, int N){
+    
+    if (nch != 2) {
+        throw std::runtime_error("Harmonizer needs 2 channels of output!");
+    }
+    
     filter.clear_bad();
     
     for (int ix = 0; ix < N; ix++) {
-        buffer.pushValue(in[0][ix]);
-        fbuffer.pushValue(filter.compute_one(in[0][ix]));
-        float p = 0;
-        if (m_est_counter.update())
-        {
-            p = pEst.estimate(fbuffer);
-            m_voiced = p > 0.0f;
-            if (m_voiced == true) {
-                T = p;
-            }
-            
-            updateVoices();
-        }
-        
-        if (pMark.findMark(T,0.35)) {
-            for (PsolaVoice &voice : voices) {
-                voice.setGrainSource(buffer.getContiguous(0), pMark.mark-T,2*T);
-            }
-        }
-        float u = 0;
-        for (PsolaVoice &voice : voices) {
-            u += voice.synthesizeOne();
-        }
-        out[0][ix] = u;
+        stereoSample u = compute_one(in[ix]);
+        out[0][ix] = u.l;
+        out[1][ix] = u.r;
     }
 }
 
@@ -46,21 +60,19 @@ void Harmonizer::addMidiNote(int note, int vel)
     int min_ix = -1;
     int min_dist = 129;
     
-    
     // look for one with the same note and take that if we can, or the empty one with
     // the closest last note to the one we want
+        
     for (int k = n_auto; k < voices.size(); k++)
     {
-        int dist = abs(voices[k].midinote - note);
-        
+        int dist = (voices[k].midinote == note) ? 0 : abs(voices[k].midinote.prev() - note);
         if (dist == 0 && voices[k].isOn()) {
             // this voice is already what we're looking for
             voices[k].setMidiNote(note,vel_);
             return;
         }
         
-        if (dist < min_dist)
-        {
+        if (dist < min_dist) {
             min_ix = k; min_dist = dist;
         }
     }
@@ -70,7 +82,6 @@ void Harmonizer::addMidiNote(int note, int vel)
         voices[min_ix].setMidiNote(note,vel_);
         return;
     }
-
 }
 
 // TODO: implement these
@@ -85,10 +96,8 @@ void Harmonizer::updateVoices ()
 {
     if (m_voiced == false)
     {
-        if (m_voiced.prev() == true)
-        {
-            for (int k = 0; k < n_auto; k++)
-            {
+        if (m_voiced.prev() == true) {
+            for (int k = 0; k < n_auto; k++) {
                 sendMidiNoteOff(voices[k].getMidiNote(), 100);
             }
         }
@@ -96,13 +105,13 @@ void Harmonizer::updateVoices ()
         return;
     }
     
-    input_voice.calculate(T);
+    int input_note = static_cast<int>(std::lrint(T_to_midi_note(T, sampleRate)));
     
     for (int k = 0; k < n_auto; k++)
     {
-        int midinote = input_voice.getMidiN() + table.getInterval(k,key_quality,root_key);
+        int midinote = input_note + table.getInterval(k,key_quality,(input_note + N_TET - root_key) % N_TET);
         if (k > inversion){
-            midinote -= 12;
+            midinote -= N_TET;
         }
         
         voices[k].setMidiNote(midinote, 65);

@@ -20,9 +20,11 @@ void HarmonizerDSPKernel::init(int inChannels, int outChannels, double inSampleR
     out_buffers = (float **) calloc(outChannels, sizeof(float *));
     
     filter = ButterworthFilter();
-    looper = Looper(n_channels,60*sampleRate,(int)lrintf(0.05*sampleRate),(int)lrintf(0.05*sampleRate));
+    looper.emplace(n_channels,60*sampleRate,(int)lrintf(0.05*sampleRate),(int)lrintf(0.05*sampleRate));
     
     noise_gate = NoiseGate(gate_thresh, 6.0f, sampleRate, 0.25);
+    
+    harmonizer.emplace(l2nfft, nvoices, maxT, sampleRate);
     
     freezers.reserve(n_channels);
     for (int k = 0; k < n_channels; k++) {
@@ -91,9 +93,11 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             break;
         case HarmParamInversion:
             inversion = (int) clamp(value,0.f,3.f);
+            harmonizer->setInversion(inversion);
             break;
         case HarmParamNvoices:
             n_auto = (int) clamp(value,1.f,4.f);
+            harmonizer->setAutoVoiceCount(n_auto);
             for (int k = n_auto; k < N_AUTO; k++)
             {
                 ui_voice_notes[k] = -1;
@@ -210,8 +214,9 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             break;
         case HarmParamLoop:
             //int old_mode = loop_mode;
-            looper.setMode(static_cast<Looper::loopMode>(value));
-           
+            looper->setMode(static_cast<Looper::loopMode>(value));
+            break;
+            
         case HarmParamInterval:
         default:
             int addr = (int) address - (int) HarmParamInterval;
@@ -227,6 +232,9 @@ void HarmonizerDSPKernel::setParameter(param_address_t address, param_value_t va
             //fprintf(stderr, "addr = %d\n", addr);
             interval_offsets[addr] = (int) value;
             ratios[addr & 0x3] = intervals[(int) value];
+            if (harmonizer) {
+                harmonizer->setInterval(static_cast<std::size_t>(addr), static_cast<int>(value));
+            }
             break;
     }
 }
@@ -238,7 +246,7 @@ param_value_t HarmonizerDSPKernel::getParameter(param_address_t address) {
         case HarmParamInversion:
             return (float) inversion;
         case HarmParamNvoices:
-            return (float) n_auto;
+            return (float) harmonizer->getAutoVoiceCount();
         case HarmParamAuto:
             return (float) autotune;
         case HarmParamAutoStrength:
@@ -589,79 +597,85 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
         out[1] = out_buffers[1] + bufferOffset;
     }
     
-    int n_computed = 0;
+    //int n_computed = 0;
     
-    // For each sample.
-    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
-    {
-        raw_buffer.pushValue(in[frameIndex]);
-        filtered_buffer.pushValue(filter.compute_one(in[frameIndex]));
-        noise_gate.compute_one(in[frameIndex]);
-                
-        if (bypass)
-        {
-            out[0][frameIndex] = in[frameIndex] / 2;
-            out[1][frameIndex] = out[0][frameIndex];
-            continue;
-        }
-        else
-        {
-            out[0][frameIndex] = out[1][frameIndex] = 0;
-        }
-        
-        if (--rcnt == 0)
-        {
-            rcnt = 256;
-            int oldT = T;
-            float p = pitchEstimator.estimate(filtered_buffer);
-            if (p == 0)
-                T = oldT + 0.1 * (400 - oldT);
-            else if (p < minT)
-                T = minT;
-            else
-                T = p;
-            
-            voiced = (p != 0);
-            
-            if (synth_enable)
-            {
-                //get_model(cix - 3*T);
-                //get_minphase_pulse(-nfft);
-            }
-            
-            update_voices();
-        }
-        
-        if (pitchMarker.findMark(T,0.25))
-        {
-            //std::cerr << "d=" << raw_buffer.getWriteIndex() - pitchMarker.mark << std::endl;
-            // set synth source
-            for (int k = 0; k < nvoices; k++){
-                float * buf = raw_buffer.getContiguous(pitchMarker.mark-T);
-                
-                psolaVoices[k].setGrainSource(buf, 0, 2*T);
-                //psolaVoices[k].win_enable = !synth_enable;
-            }
-                        
-            int nn = frameIndex - n_computed;
-            psola(out[0]+n_computed, out[1]+n_computed, nn);
-            n_computed += nn;
-        }
-                
-        float x = autotune ? simpleVoices[0].computeOne() : in[frameIndex];
-        voicegain += .001 * sgn(voicegain_target - voicegain);
-
-        out[0][frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
-        if (stereo_mode != StereoModeSplit){
-            out[1][frameIndex] = out[0][frameIndex];
-        }
-        
-    }
+//    // For each sample.
+//    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+//    {
+//        raw_buffer.pushValue(in[frameIndex]);
+//        filtered_buffer.pushValue(filter.compute_one(in[frameIndex]));
+//        noise_gate.compute_one(in[frameIndex]);
+//                
+//        if (bypass)
+//        {
+//            out[0][frameIndex] = in[frameIndex] / 2;
+//            out[1][frameIndex] = out[0][frameIndex];
+//            continue;
+//        }
+//        else
+//        {
+//            out[0][frameIndex] = out[1][frameIndex] = 0;
+//        }
+//        
+//        if (--rcnt == 0)
+//        {
+//            rcnt = 256;
+//            float p = pitchEstimator.estimate(filtered_buffer);
+//
+//            if (p > 0.f)
+//                T = p;
+//            
+//            voiced = (p != 0);
+//            
+//            if (synth_enable)
+//            {
+//                //get_model(cix - 3*T);
+//                //get_minphase_pulse(-nfft);
+//            }
+//            
+//            update_voices();
+//        }
+//        
+//        if (pitchMarker.findMark(T,0.25) == true)
+//        {
+//            //std::cerr << "d=" << raw_buffer.getWriteIndex() - pitchMarker.mark << std::endl;
+//            // set synth source
+//            float * grainbuf = raw_buffer.getContiguous(pitchMarker.mark-T);
+//            
+//            for (int k = 0; k < nvoices; k++){
+//                psolaVoices[k].setGrainSource(grainbuf, 0, 2*T);
+//                //psolaVoices[k].win_enable = !synth_enable;
+//            }
+//                        
+//            int nn = frameIndex - n_computed;
+//            psola(out[0]+n_computed, out[1]+n_computed, nn);
+//            n_computed += nn;
+//        }
+//                
+//        float x = autotune ? simpleVoices[0].computeOne() : in[frameIndex];
+//        voicegain += .001 * sgn(voicegain_target - voicegain);
+//
+//        
+//        
+//        out[0][frameIndex] = x * voicegain/2; //in[frameIndex] * voicegain/2;
+//        if (stereo_mode != StereoModeSplit){
+//            out[1][frameIndex] = out[0][frameIndex];
+//        }
+//        
+//    }
+//    
+//    int nn = frameCount - n_computed;
+//    psola(out[0]+n_computed, out[1]+n_computed, nn);
+//    
+//    filter.clear_bad();
     
-    int nn = frameCount - n_computed;
-    psola(out[0]+n_computed, out[1]+n_computed, nn);
+    memcpy(out[0], in, frameCount * sizeof(float));
+    memcpy(out[1], in, frameCount * sizeof(float));
     
-    filter.clear_bad();
+    harmonizer->compute(in, out, channelCount, frameCount);
+    
+    midi_note_number = T_to_midi_note(harmonizer->getT(), sampleRate);
+    harmonizer->getAutoNotes(ui_voice_notes, n_auto);
             
     // compute freezing stuff
     for (int ch = 0; ch < n_channels; ch++) {
@@ -674,7 +688,7 @@ void HarmonizerDSPKernel::process(frame_count_t frameCount, frame_count_t buffer
     
     
     // compute looping stuff
-    looper.compute(out_buffers, bufferOffset, frameCount);
+    looper->compute(out_buffers, bufferOffset, frameCount);
 }
 
 void HarmonizerDSPKernel::psola(float *out, float *out2, int n)
@@ -707,7 +721,7 @@ void HarmonizerDSPKernel::psola(float *out, float *out2, int n)
 //                simpleVoices[vix].computeOne();
             
             //volatile float uu = psolaVoices[vix].synthesizeOne();
-            volatile PsolaVoice::stereoSample u = psolaVoices[vix].render();
+            volatile stereoSample u = psolaVoices[vix].render();
             
             u.l *= harmgain;
             u.r *= harmgain;
@@ -757,6 +771,7 @@ void HarmonizerDSPKernel::addnote(int note, int vel)
 
     psolaVoices[min_ix].setMidiNote(note, vel_);
     
+    harmonizer->addMidiNote(note, vel_);
     update_midi();
 }
 
@@ -1031,14 +1046,14 @@ void HarmonizerDSPKernel::update_voices (void)
 
 
 float HarmonizerDSPKernel::loopPosition() {
-    return looper.position();
+    return looper->position();
 }
 
 int HarmonizerDSPKernel::setLoopMode(int mode) {
-    looper.setMode(static_cast<Looper::loopMode>(mode));
+    looper->setMode(static_cast<Looper::loopMode>(mode));
     return mode;
 }
 int HarmonizerDSPKernel::getLoopMode() {
-    return looper.loop_mode;
+    return looper->loop_mode;
 }
 

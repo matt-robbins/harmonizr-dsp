@@ -185,12 +185,11 @@ public:
         noise_gate { NoiseGate()},
         pitchEstimator { PitchEstimatorYIN(maxT,l2nfft,threshold,nmed) },
         pitchMarker { PitchMarker(raw_buffer,maxT) },
-        window { Window(Window::Hann, nfft)},
-        looper { Looper()}
+        window { Window(Window::Hann, nfft)}
     {
         for (int i = 0; i < nvoices; i++){
             simpleVoices.push_back(SimplePitchShifter(raw_buffer,window,maxT));
-            psolaVoices.push_back(PsolaVoice());
+            psolaVoices.push_back(PsolaVoice(sampleRate));
         }
         fprintf(stderr, "bufsize = %d\n", raw_buffer.getSize());
     }
@@ -252,14 +251,17 @@ private:
     Window window;
     PitchEstimatorYIN pitchEstimator;
     PitchMarker pitchMarker;
+    
+    std::optional<Harmonizer> harmonizer = std::nullopt;
+    
     std::vector<SimplePitchShifter> simpleVoices;
     std::vector<PsolaVoice> psolaVoices;
     
     std::vector<SpectralProcessor> freezers;
     
-    Looper looper;
+    std::optional<Looper> looper = std::nullopt;
     
-    int nvoices = 16;
+    static constexpr int nvoices = 16;
     
     float rcnt = 256;
     float T = 400;

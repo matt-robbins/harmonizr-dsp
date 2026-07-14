@@ -4,7 +4,8 @@
 #include <numeric>
 #include "Util.hpp"
 
-PitchMarker::PitchMarker(CircularAudioBuffer &b, float maxT) : b{b}, maxT{maxT} {
+PitchMarker::PitchMarker(CircularAudioBuffer &b, float maxT, float search_frac) :
+    b{b}, maxT{maxT}, search_frac{search_frac}{
     //std::cerr << "buffer size " << b.getSize() << std::endl;
     //std::cerr << "maxT" << maxT << std::endl;
     mark = b.getWriteIndex() - maxT/2;
@@ -16,7 +17,7 @@ float PitchMarker::getMark() {
     return mark;
 }
 
-bool PitchMarker::findMark(float T, float frac) {
+bool PitchMarker::findMark(float T, bool voiced) {
     int wp = b.getWriteIndex();
 
     // this condition is true if and only if b has circled around to 0. 
@@ -42,9 +43,8 @@ bool PitchMarker::findMark(float T, float frac) {
         mark += T;
     }
 
-    int srch_rng = (int) floorf(T * frac);
+    int srch_rng = (int) floorf(T * search_frac);
     
-
     int vlen = srch_rng * 2 + 1;
     float * data = b.getContiguous(floorf(mark - srch_rng));
     float shunt_frac = mark - floorf(mark);

@@ -3,8 +3,8 @@
 #include <iostream>
 #include <cmath>
 
-GranularSynth::GranularSynth(int table_size) : 
-    win(Window::Hann,64), N{table_size} {
+GranularSynth::GranularSynth(int table_size, float fs) :
+win(Window::Hann,64), N{table_size}, fs{fs} {
     // std::cout << "grain 1 size = " << grains[1].size;
         gainTracker.setT(1000);
         ratioTracker.setT(1000);
@@ -21,7 +21,7 @@ void GranularSynth::newGrain(float *data, float offset, float start_ix) {
 
     // linear search for first open grain
     for (int k = 0; k < N; k++){
-        if (grains[k].size >= 0) {
+        if (grains[k].size > 0) {
             continue;
         }
         //std::cout << "found open grain at " << k << std::endl;

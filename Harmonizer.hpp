@@ -10,9 +10,21 @@
 #include <vector>
 #include <iostream>
 
+struct stereoSample {
+    float l = 0.f;
+    float r = 0.f;
+    stereoSample& operator+=(const stereoSample& rhs) {
+        l += rhs.l;
+        r += rhs.r;
+        return *this;
+    }
+};
+
 class PsolaVoice : public GranularSynth {
 public:
-    PsolaVoice(int maxOctave=4) : note_track{ IirTracker(1000) }, vel_track{ IirTracker(1000)} {}
+    PsolaVoice(int fs) : note_track{ IirTracker(1000) }, vel_track{ IirTracker(1000)} {
+        this->fs = fs;
+    }
     ~PsolaVoice() {}
     
     void setMidiNote(int nn, int vel) {
@@ -39,19 +51,18 @@ public:
         this->pan = pan;
     }
     
-    struct stereoSample {
-        float l = 0.f;
-        float r = 0.f;
-    };
-    
     stereoSample render() {
         if (midinote > 0)
         {
             T = midi_note_to_T(static_cast<float>(midinote), fs);
         }
+        if (!isOn()) {
+            return stereoSample {};
+        }
         
         float u = GranularSynth::synthesizeOne();
-        return stereoSample {u * (pan + 1.f)/2.f,u * (pan - 1.f)/2.f};
+        float pan_ = (pan + 1.f)/2.f;
+        return stereoSample {u * (1.f - pan_),u * pan_};
     }
     
     StateMemVariable<int> midinote = -1;
@@ -64,32 +75,6 @@ private:
     float pan = 0.0;
 };
 
-class InputVoice {
-public:
-    InputVoice(float sampleRate, float baseTuning) : m_sampleRate{sampleRate}, m_baseTuning{baseTuning} {}
-    void calculate(float T) {
-        m_midiF = m_midiA4 + log2f (m_sampleRate / (T * m_baseTuning)) * m_nTet;
-        m_midiN = (int) roundf(m_midiF);
-    }
-    float getMidiF() {
-        return m_midiF;
-    }
-    int getMidiN() {
-        return m_midiN.value();
-    }
-private:
-    float m_midiF;
-    StateMemVariable<int> m_midiN = {-1};
-    StateMemVariable<bool> m_voiced = {false};
-    float m_T;
-    float m_sampleRate;
-    float m_baseTuning;
-    float m_midiA4 = 69.0;
-    float m_nTet = 12.0f;
-    float m_hystThresh = 0.65;
-    
-};
-
 class Harmonizer {
 public:
     Harmonizer(int l2bufsize, int nvoices, int maxT, float sampleRate) :
@@ -98,17 +83,17 @@ public:
         fbuffer{l2bufsize+1},
         pEst{maxT, l2bufsize - 1, 0.2, 7},
         pMark{buffer,(float)maxT},
-        table{n_auto, n_qual, n_tet},
-        sampleRate{sampleRate},
-        input_voice{sampleRate,baseTuning}
+        table{N_AUTO, N_QUAL, N_TET},
+        sampleRate{sampleRate}
     {
         for (int k = 0; k < nvoices; k++) {
-            voices.push_back(PsolaVoice());
+            voices.push_back(PsolaVoice(sampleRate));
         }
     }
     ~Harmonizer() {}
 
-    void compute(float *in[], float *out[], int nch, int N);
+    stereoSample compute_one(float in);
+    void compute(float *in, float *out[], int nch, int N);
     void setVoiceT(int voice_n, float T);
     void setPitchEstPeriod(int per);
     void updateVoices();
@@ -117,22 +102,64 @@ public:
     void sendMidiNoteOff(int nn, int vel);
     
     void setRootKey(int rk) {
+        if (rk < 0 || rk >= N_TET) {
+            throw std::runtime_error("Key root must be between 0 and " + std::to_string(N_TET-1) + "!");
+        }
         root_key = rk;
     }
     void setKeyQuality(int kq) {
+        if (kq < 0 || kq >= N_QUAL) {
+            throw std::runtime_error("Key quality must be between 0 and " + std::to_string(N_QUAL-1) + "!");
+        }
         key_quality = kq;
+    }
+    
+    void setAutoIntervals(int * intervals, int N) {
+        if (N_AUTO * N_QUAL * N_TET != N) {
+            throw std::runtime_error("Interval Table size must match!");
+        }
+        
+        table.setAll(intervals, N);
+    }
+    
+    void setInterval(std::size_t interval_n, int value) {
+        table.setRaw(interval_n, value);
+    }
+    
+    void setAutoVoiceCount(int n) {
+        n_auto = n;
+    }
+    
+    void setInversion(int n) {
+        inversion = n;
+    }
+    
+    int getAutoVoiceCount() {
+        return n_auto;
+    }
+    
+    float getT() {
+        return T;
+    }
+    
+    void getAutoNotes(int * notes, int N)
+    {
+        for (int k = 0; k < n_auto; k++) {
+            notes[k] = (int) lrintf(voices[k].midinote);
+        }
     }
 
 private:
-    int maxT = 400;
-    float T = 100;
+    static constexpr int N_AUTO = 4;
+    static constexpr int N_QUAL = 3;
+    static constexpr int N_TET = 12;
+    int maxT = 1000;
+    float T = 400;
     StateMemVariable<bool> m_voiced = {false};
     Counter m_est_counter = {256};
     float sampleRate = 44100;
     float baseTuning = 440.0;
-    int n_auto = 4;
-    int n_tet = 12;
-    int n_qual = 3;
+    int n_auto = N_AUTO;
     
     int stereo_mode = 0;
     unsigned int sample_count = 0;
@@ -141,7 +168,7 @@ private:
     
     int root_key = 0;
     int key_quality = 0;
-    int inversion = 0;
+    int inversion = 2;
     
     CircularAudioBuffer buffer, fbuffer;
     ButterworthFilter filter = {};
@@ -149,8 +176,6 @@ private:
     PitchMarker pMark;
     IntervalTable table;
     std::vector<PsolaVoice> voices;
-    std::vector<PsolaVoice> midi_voices;
-    InputVoice input_voice;
 };
 
 
